@@ -40,7 +40,7 @@ const SENSITIVE_BASENAMES = [
 
 const SENSITIVE_EXTENSIONS = [/\.pem$/i, /\.p12$/i, /\.pfx$/i, /\.key$/i, /\.keystore$/i, /\.jks$/i];
 
-const SENSITIVE_DIRS = new Set([".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker"]);
+const SENSITIVE_DIRS = new Set([".ssh", ".aws", ".gnupg", "gcloud", ".kube", ".docker"]);
 
 /** True when reading or writing here is a decision a human should make. */
 export function isSensitivePath(path: string): boolean {
