@@ -2,11 +2,12 @@
  * `jev_rank` — relevance-rank candidate texts, or the caller's own files,
  * against a query.
  *
- * One Noul per candidate, batched into as few requests as the context budget
- * allows. The model never sees candidate ids: ids are arbitrary caller strings
- * and would be both a distractor in the state and unsafe as question keys, so
- * candidates go in as an index-keyed array and the indices are mapped back to
- * ids in code.
+ * Order comes from a `which` Choice over each batch, reconciled across batches
+ * by one final Choice over the batch winners; a calibrated yes/no per candidate
+ * gives the absolute `relevance` that `min_relevance` filters on. The model
+ * never sees candidate ids: ids are arbitrary caller strings and would be both a
+ * distractor in the state and unsafe as question keys, so candidates go in as an
+ * index-keyed array and the indices are mapped back to ids in code.
  *
  * With `paths` or `glob` the server does the reading. That is the whole point
  * of those two arguments: the caller spends no context emitting file text and
@@ -18,7 +19,15 @@
 import { z } from "zod";
 import { BudgetError, DEFAULT_BUDGET_LIMITS, estimateBudget, fitsBudget, type BudgetLimits } from "../decision/budget.js";
 import { estimateCostUsd } from "../decision/pricing.js";
-import type { DecisionModel, EvaluateRequest, Json, NoulAnswer, Question, State } from "../decision/types.js";
+import type {
+  ChoiceAnswer,
+  DecisionModel,
+  EvaluateRequest,
+  Json,
+  NoulAnswer,
+  Question,
+  State,
+} from "../decision/types.js";
 import {
   collectChunks,
   emptySkipped,
@@ -28,17 +37,18 @@ import {
   type SkippedCounts,
 } from "../files/index.js";
 import { envelopeShape, mapWithConcurrency, sumUsage, type ToolConfig } from "./shared.js";
+import { indexKeyedState, isChoice, type Entry } from "./candidates.js";
 
 export const name = "jev_rank";
 
 export const description = [
-  "Rank files or texts by how well each helps answer a query, using Jev's calibrated yes/no judgment (one question per item, batched and parallel).",
-  "Pass `glob` or `paths` for anything you have not already read — do NOT read files in order to pass their text. The server reads and chunks them itself and returns only `path:start_line-end_line` + score, so a 300-file search costs you almost no context in either direction.",
+  "Rank files or texts by how well each helps answer a query: a relative Choice over the batch for order, Jev's calibrated yes/no per item for filtering.",
+  "Pass `glob` or `paths` for anything you have not already read — do NOT read files to pass their text. The server reads and chunks them and returns only `path:start_line-end_line` + score, so a 300-file search costs almost no context either way.",
   "Pass `candidates` (id + text) only for text you already hold: search hits, retrieved passages, tool results.",
-  "`unit`: `chunk` (default) ranks line ranges, `file` ranks whole files by their best chunk. Prefer `file` for 'where is X' questions: Jev ranks by what a chunk talks about, so a header comment can outrank the code it describes.",
-  "Sensitive files (.env, keys, credentials), binaries, generated output and anything outside the project root are never read; they come back counted in `skipped`.",
-  "`relevance` is P(helps answer the query). Trust the top 1-3, not the order of the tail; a low `any_relevant` means look elsewhere.",
-  "If `score_spread` (top minus median) is below 0.15 the ranking is not informative — narrow the glob or rephrase the query.",
+  "`unit`: `chunk` (default) ranks line ranges, `file` ranks whole files by their best chunk. Prefer `file` for 'where is X': a header comment can outrank the code it describes.",
+  "Sensitive files (.env, keys, credentials), binaries and generated output are never read; they come back in `skipped`.",
+  "Order comes from a Choice among the strongest candidates: trust the top 1-3 when `choice_margin` >= 0.10, the tail is by `relevance`. `relevance` is P(helps answer the query) and drives `min_relevance`; low `any_relevant` means look elsewhere.",
+  "`score_spread` (top minus median relevance) below 0.15 means the absolute scores are flat; `choice_margin` says whether the top pick was clear.",
 ].join("\n");
 
 const candidateSchema = z.object({
@@ -115,18 +125,24 @@ export const outputShape = {
         path: z.string().optional().describe("Present for file sources: path relative to the project root."),
         start_line: z.number().int().optional().describe("1-based, inclusive."),
         end_line: z.number().int().optional().describe("1-based, inclusive."),
-        relevance: z.number().describe("P(this item helps answer the query), 0..1."),
+        relevance: z.number().describe("P(this item helps answer the query), 0..1. Absolute; what `min_relevance` filters on."),
         rank: z.number().int().describe("1-based position after sorting and filtering."),
+        choice: z
+          .number()
+          .describe("The Choice probability from the request that placed this row (the final round for the top items, its own batch for the tail)."),
       }),
     )
-    .describe("Sorted by relevance descending; ties keep input order. Text is never echoed back."),
+    .describe("Ordered by the Choice among the strongest candidates, then by relevance for the tail. Text is never echoed back."),
   any_relevant: z
     .number()
     .describe(
-      "P(at least one candidate helps answer the query), as the MAXIMUM across requests. Low means: look elsewhere. " +
-        "Being a maximum, it is biased upward as the set grows, because a large set is split into more requests and " +
-        "each contributes a sample — so read a high value as weak evidence and a low value as strong evidence. " +
-        "`score_spread` is the better diagnostic.",
+      "P(at least one candidate helps answer the query), judged once over the strongest candidates. Low means: look elsewhere.",
+    ),
+  choice_margin: z
+    .number()
+    .describe(
+      "Top pick's Choice probability minus the runner-up's, in the request that decided the order, 2 decimals. " +
+        "Below 0.10 the top pick and the runner-up were a toss-up; open both.",
     ),
   score_spread: z
     .number()
@@ -135,7 +151,7 @@ export const outputShape = {
         "Below 0.15 the scores are effectively flat and the ordering is not informative: narrow the glob or " +
         "rephrase the query rather than trusting the order.",
     ),
-  chunks: z.number().int().describe("How many API requests the item set was split into."),
+  chunks: z.number().int().describe("How many API requests this took: the fan-out over the batches plus the final deciding request."),
   total_candidates: z.number().int().describe("How many items were judged, before top_k/min_relevance."),
   files_scanned: z.number().int().optional().describe("File sources only: files actually read."),
   chunks_scored: z.number().int().optional().describe("File sources only: line-range chunks judged."),
@@ -155,40 +171,21 @@ export const FILE_CONCURRENCY = 8;
 /**
  * Most candidates per request, whatever the source.
  *
- * Packing a request to the context budget alone puts ~50 candidates in one
- * call, and at that width Jev stops discriminating between them. Measured
- * against this repo with the query "where are retries and backoff implemented",
- * over 159 file chunks:
- *
- *   per request | requests | input tokens | best true-hit rank | top-median spread
- *            53 |        3 |      103,448 | not in the top six |              0.03
- *            32 |        5 |      103,762 |                  2 |              0.62
- *            16 |       10 |      105,012 |                  1 |              0.73
- *             8 |       20 |      107,635 |                  1 |              0.83
- *
- * That is the jaggedness the vendor notes describe: accuracy per question falls
- * as unrelated state grows. At 53 per request the scores were uniform noise
- * between 0.84 and 0.87.
- *
- * It costs nothing to fix. The candidate texts are the whole of the payload and
- * each is sent exactly once either way; only the query and the one-line
- * questions repeat, which measured as a 2.5% token increase and *lower*
- * wall-clock time, because ten requests across an eight-wide fan-out finish
- * sooner than three big ones.
- *
- * The budget check still applies: a request is whichever is smaller, this many
- * candidates or as many as fit.
+ * Order no longer comes from the per-candidate Noul — which went flat past ~50
+ * candidates a request — but from a `which` Choice over the batch, then a final
+ * Choice over the batch winners. A Choice discriminates across a wider set than
+ * a Noul battery does, so the cap is raised toward the Choice's reliable width
+ * (~240 options). The context budget still binds first: file chunks average
+ * ~2.3k chars, so a request fills at ~45 chunks regardless of this cap, and 200
+ * is reached only by short candidates (grep hits, symbol lists) — which is also
+ * `jev_pick`'s regime. `scripts/bench-rank.ts` is what sets this number.
  */
-export const MAX_CANDIDATES_PER_REQUEST = 16;
+export const MAX_CANDIDATES_PER_REQUEST = 200;
 
-export interface Entry {
-  id: string;
-  text: string;
-  /** Position in the caller's input array; the stable tie-break. */
-  index: number;
-  /** File sources only: where this text came from. */
-  where?: { path: string; start_line: number; end_line: number } | undefined;
-}
+/** Top candidates each batch contributes to the final deciding request. */
+export const FINALISTS_PER_REQUEST = 3;
+
+export type { Entry };
 
 function candidateQuestion(localIndex: number, extra: string | undefined): Question {
   const suffix = extra === undefined || extra.trim() === "" ? "" : ` Relevant here means: ${extra.trim()}`;
@@ -215,17 +212,46 @@ function anyRelevantQuestion(extra: string | undefined): Question {
   };
 }
 
+const WHICH_ID = "which";
+
+/**
+ * The relative Choice: which single candidate best helps, over the batch.
+ *
+ * Option names are the zero-based indices into `candidates`; their values are
+ * `null` because the text is already in the state and a label would only
+ * duplicate it (and a 40-char chunk head is exactly the "header comment
+ * outranks the code" distractor). `none` carries a real description so the
+ * model has somewhere to put "nothing here helps".
+ */
+function whichQuestion(n: number, extra: string | undefined): Question {
+  const suffix = extra === undefined || extra.trim() === "" ? "" : ` Relevant here means: ${extra.trim()}`;
+  const criteria: Record<string, string | null> = {};
+  for (let i = 0; i < n; i += 1) criteria[String(i)] = null;
+  criteria.none = "No entry in `candidates` contains information that helps answer `query`.";
+  return {
+    type: "choice",
+    instructions:
+      "Which entry of `candidates` best helps answer `query`? The option names are the zero-based indices " +
+      `into \`candidates\`. Choose \`none\` only if no entry helps at all.${suffix}`,
+    criteria,
+  };
+}
+
 function buildRequest(
   query: string,
   entries: readonly Entry[],
   extra: string | undefined,
+  opts: { anyRelevant: boolean },
 ): { state: State; questions: Record<string, Question> } {
-  const state: Record<string, Json> = { query, candidates: entries.map((entry) => entry.text) };
+  const state: Record<string, Json> = { query, candidates: indexKeyedState(entries) };
   const questions: Record<string, Question> = {};
   entries.forEach((_entry, localIndex) => {
     questions[`cand_${localIndex}`] = candidateQuestion(localIndex, extra);
   });
-  questions[ANY_RELEVANT_ID] = anyRelevantQuestion(extra);
+  questions[WHICH_ID] = whichQuestion(entries.length, extra);
+  // Asked only in the request that decides the order — the single request, or
+  // the final one over the batch winners — never redundantly in every batch.
+  if (opts.anyRelevant) questions[ANY_RELEVANT_ID] = anyRelevantQuestion(extra);
   return { state, questions };
 }
 
@@ -252,7 +278,7 @@ export function chunkCandidates(
       chunks.push(current);
       current = [];
     }
-    const solo = buildRequest(query, [entry], extra);
+    const solo = buildRequest(query, [entry], extra, { anyRelevant: true });
     if (!fitsBudget(solo.state, solo.questions, limits)) {
       const estimate = estimateBudget(solo.state, solo.questions);
       throw new BudgetError(
@@ -266,7 +292,7 @@ export function chunkCandidates(
     }
 
     const attempt = [...current, entry];
-    const request = buildRequest(query, attempt, extra);
+    const request = buildRequest(query, attempt, extra, { anyRelevant: true });
     if (fitsBudget(request.state, request.questions, limits)) {
       current = attempt;
     } else {
@@ -385,6 +411,101 @@ export function foldToFiles(scored: readonly Scored[]): Scored[] {
   return [...best.values()];
 }
 
+/** A candidate placed in the order, with the Choice probability that placed it. */
+export interface Placed {
+  entry: Entry;
+  relevance: number;
+  choice: number;
+}
+
+/**
+ * Top pick's probability minus the runner-up's, over the option probabilities
+ * of the deciding request, `none` excluded. 2 decimals. Below 0.10 the top two
+ * were a toss-up.
+ */
+export function choiceMargin(probabilities: Record<string, number>): number {
+  const values = Object.entries(probabilities)
+    .filter(([key]) => key !== "none")
+    .map(([, value]) => value)
+    .sort((a, b) => b - a);
+  if (values.length === 0) return 0;
+  const top = values[0] as number;
+  const runner = values[1] ?? 0;
+  return Math.round((top - runner) * 100) / 100;
+}
+
+/**
+ * The candidates that go into the final deciding request: the top
+ * `FINALISTS_PER_REQUEST` of each batch by its own `which`, then trimmed by
+ * descending relevance until one request over them all fits the budget.
+ *
+ * Pure: takes each batch's scored candidates, returns the finalist entries in
+ * no particular order (the final request decides the order among them).
+ */
+export function pickFinalists(
+  perRequest: readonly { scores: readonly Placed[] }[],
+  query: string,
+  extra: string | undefined,
+  limits: BudgetLimits = DEFAULT_BUDGET_LIMITS,
+): Entry[] {
+  const pool: Placed[] = [];
+  for (const request of perRequest) {
+    const top = [...request.scores].sort((a, b) => b.choice - a.choice).slice(0, FINALISTS_PER_REQUEST);
+    pool.push(...top);
+  }
+  pool.sort((a, b) => b.relevance - a.relevance || a.entry.index - b.entry.index);
+  let finalists = pool.map((item) => item.entry);
+  while (finalists.length > 1) {
+    const request = buildRequest(query, finalists, extra, { anyRelevant: true });
+    if (fitsBudget(request.state, request.questions, limits)) break;
+    finalists = finalists.slice(0, -1);
+  }
+  return finalists;
+}
+
+/**
+ * The global order: finalists first, by the deciding request's `which` (ties by
+ * relevance, then input index); then every non-finalist by relevance, index.
+ * The finalists' `choice` is overwritten with the deciding request's value.
+ * Pure.
+ */
+export function orderRows(
+  all: readonly Placed[],
+  finalists: ReadonlySet<Entry>,
+  finalChoice: ReadonlyMap<Entry, number>,
+): Placed[] {
+  const finalistRows = all
+    .filter((row) => finalists.has(row.entry))
+    .map((row) => ({ ...row, choice: finalChoice.get(row.entry) ?? row.choice }))
+    .sort((a, b) => b.choice - a.choice || b.relevance - a.relevance || a.entry.index - b.entry.index);
+  const tailRows = all
+    .filter((row) => !finalists.has(row.entry))
+    .sort((a, b) => b.relevance - a.relevance || a.entry.index - b.entry.index);
+  return [...finalistRows, ...tailRows];
+}
+
+/** Fold to one row per file keeping its best-ranked chunk: first occurrence in an already-ordered list. */
+export function foldToFilesByRank(ordered: readonly Placed[]): Placed[] {
+  const seen = new Set<string>();
+  const out: Placed[] = [];
+  for (const row of ordered) {
+    const path = row.entry.where?.path;
+    if (path === undefined) {
+      out.push(row);
+      continue;
+    }
+    if (seen.has(path)) continue;
+    seen.add(path);
+    out.push(row);
+  }
+  return out;
+}
+
+/** The Noul value of an answer, or 0 when it is absent or not a Noul. */
+function noulOf(answer: NoulAnswer | ChoiceAnswer | undefined): number {
+  return answer !== undefined && answer.type === "noul" && typeof answer.noul === "number" ? answer.noul : 0;
+}
+
 export async function run(
   model: DecisionModel,
   input: RankToolInput,
@@ -403,40 +524,74 @@ export async function run(
       ? Math.max(config.maxConcurrency, FILE_CONCURRENCY)
       : config.maxConcurrency;
   const started = Date.now();
+  const single = chunks.length === 1;
 
-  const results = await mapWithConcurrency(chunks, concurrency, async (chunk) => {
-    const { state, questions } = buildRequest(input.query, chunk, input.instructions);
+  const perRequest = await mapWithConcurrency(chunks, concurrency, async (chunk) => {
+    const { state, questions } = buildRequest(input.query, chunk, input.instructions, { anyRelevant: single });
     const request: EvaluateRequest = { state, questions };
     if (signal !== undefined) request.signal = signal;
     const result = await model.evaluate(request);
-    return { chunk, result };
+    const answers = result.answers as Record<string, NoulAnswer | ChoiceAnswer | undefined>;
+    const whichAnswer = answers[WHICH_ID];
+    const which = isChoice(whichAnswer) ? whichAnswer.probabilities : {};
+    const scores: Placed[] = chunk.map((entry, localIndex) => ({
+      entry,
+      relevance: noulOf(answers[`cand_${localIndex}`]),
+      choice: which[String(localIndex)] ?? 0,
+    }));
+    const anyRelevant = single ? noulOf(answers[ANY_RELEVANT_ID]) : undefined;
+    return { scores, which, anyRelevant, result };
   });
 
-  const scored: Scored[] = [];
-  let anyRelevant = 0;
+  const flat: Placed[] = perRequest.flatMap((request) => request.scores);
+  const usageParts = perRequest.map((request) => request.result.usage);
+  const answeringModel = perRequest[0]?.result.model ?? model.name;
 
-  for (const { chunk, result } of results) {
-    const answers = result.answers as Record<string, NoulAnswer | undefined>;
-    chunk.forEach((entry, localIndex) => {
-      const answer = answers[`cand_${localIndex}`];
-      scored.push({ entry, relevance: answer?.noul ?? 0 });
-    });
-    const any = answers[ANY_RELEVANT_ID]?.noul;
-    if (typeof any === "number" && any > anyRelevant) anyRelevant = any;
+  let finalists: ReadonlySet<Entry>;
+  let finalChoice: ReadonlyMap<Entry, number>;
+  let anyRelevant: number;
+  let choiceMarginValue: number;
+  let requestCount = chunks.length;
+
+  if (single) {
+    const only = perRequest[0];
+    finalists = new Set((only?.scores ?? []).map((score) => score.entry));
+    finalChoice = new Map((only?.scores ?? []).map((score) => [score.entry, score.choice]));
+    anyRelevant = only?.anyRelevant ?? 0;
+    choiceMarginValue = choiceMargin(only?.which ?? {});
+  } else {
+    const chosen = pickFinalists(perRequest, input.query, input.instructions);
+    const { state, questions } = buildRequest(input.query, chosen, input.instructions, { anyRelevant: true });
+    const finalRequest: EvaluateRequest = { state, questions };
+    if (signal !== undefined) finalRequest.signal = signal;
+    const finalResult = await model.evaluate(finalRequest);
+    requestCount += 1;
+    usageParts.push(finalResult.usage);
+    const finalAnswers = finalResult.answers as Record<string, NoulAnswer | ChoiceAnswer | undefined>;
+    const finalWhichAnswer = finalAnswers[WHICH_ID];
+    const finalWhich = isChoice(finalWhichAnswer) ? finalWhichAnswer.probabilities : {};
+    finalists = new Set(chosen);
+    finalChoice = new Map(chosen.map((entry, localIndex) => [entry, finalWhich[String(localIndex)] ?? 0]));
+    anyRelevant = noulOf(finalAnswers[ANY_RELEVANT_ID]);
+    choiceMarginValue = choiceMargin(finalWhich);
   }
 
   const unit: RankUnit = input.unit ?? "chunk";
-  const rows = source.fromFiles && unit === "file" ? foldToFiles(scored) : scored;
+  const ordered = orderRows(flat, finalists, finalChoice);
+  const rows = source.fromFiles && unit === "file" ? foldToFilesByRank(ordered) : ordered;
 
   const minRelevance = input.min_relevance ?? 0;
   const topK = input.top_k ?? DEFAULT_TOP_K;
 
   const ranked = rows
     .filter((item) => item.relevance >= minRelevance)
-    .sort((a, b) => b.relevance - a.relevance || a.entry.index - b.entry.index)
     .slice(0, topK)
     .map((item, position) => {
-      const row: RankToolOutput["ranked"][number] = { relevance: item.relevance, rank: position + 1 };
+      const row: RankToolOutput["ranked"][number] = {
+        relevance: item.relevance,
+        rank: position + 1,
+        choice: Math.round(item.choice * 100) / 100,
+      };
       if (item.entry.where === undefined) {
         row.id = item.entry.id;
       } else {
@@ -450,13 +605,14 @@ export async function run(
   const output: RankToolOutput = {
     ranked,
     any_relevant: anyRelevant,
+    choice_margin: choiceMarginValue,
     // Over everything judged, not just the rows that survived top_k: the
-    // question it answers is whether the model discriminated at all.
+    // question it answers is whether the absolute scores discriminated at all.
     score_spread: scoreSpread(rows.map((row) => row.relevance)),
-    chunks: chunks.length,
+    chunks: requestCount,
     total_candidates: rows.length,
-    model: results[0]?.result.model ?? model.name,
-    usage: sumUsage(results.map(({ result }) => result.usage)),
+    model: answeringModel,
+    usage: sumUsage(usageParts),
     latency_ms: Date.now() - started,
   };
 

@@ -2,22 +2,34 @@ import { describe, expect, it } from "vitest";
 import { BudgetError } from "../../src/decision/budget.js";
 import type { Answer, Question } from "../../src/decision/types.js";
 import * as rankTool from "../../src/tools/rank.js";
-import { FakeModel, noul, testConfig } from "../helpers/fake-model.js";
+import { choice, FakeModel, noul, testConfig } from "../helpers/fake-model.js";
 
-/** Answer each `cand_N` from the text it points at, via the chunk's own state. */
+/**
+ * Answer each `cand_N` from the text it points at, plus the `which` Choice
+ * (all mass on the highest-scoring candidate in the batch, so the order the
+ * tool derives from the Choice matches the relevance order) and `any_relevant`
+ * when the request asks it (the single or final deciding request).
+ */
 function relevanceResponder(scoreFor: (text: string) => number) {
   return (call: { state: unknown; questions: Record<string, Question> }): Record<string, Answer> => {
     const state = call.state as { query: string; candidates: string[] };
     const answers: Record<string, Answer> = {};
     let best = 0;
+    let bestIndex = 0;
     for (const id of Object.keys(call.questions)) {
-      if (id === "any_relevant") continue;
+      if (!id.startsWith("cand_")) continue;
       const index = Number(id.slice("cand_".length));
       const value = scoreFor(state.candidates[index] as string);
       answers[id] = noul(value);
-      if (value > best) best = value;
+      if (value > best) {
+        best = value;
+        bestIndex = index;
+      }
     }
-    answers.any_relevant = noul(best);
+    if (call.questions.which !== undefined) {
+      answers.which = choice(String(bestIndex), { [String(bestIndex)]: 1 }, 1);
+    }
+    if (call.questions.any_relevant !== undefined) answers.any_relevant = noul(best);
     return answers;
   };
 }
@@ -44,11 +56,12 @@ describe("jev_rank", () => {
     expect(result.chunks).toBe(1);
     expect(result.total_candidates).toBe(3);
     expect(result.ranked).toEqual([
-      { id: "doc:b", relevance: 0.95, rank: 1 },
-      { id: "doc:c", relevance: 0.6, rank: 2 },
-      { id: "doc:a", relevance: 0.05, rank: 3 },
+      { id: "doc:b", relevance: 0.95, rank: 1, choice: 1 },
+      { id: "doc:c", relevance: 0.6, rank: 2, choice: 0 },
+      { id: "doc:a", relevance: 0.05, rank: 3, choice: 0 },
     ]);
     expect(result.any_relevant).toBe(0.95);
+    expect(result.choice_margin).toBe(1);
     expect(JSON.stringify(result)).not.toContain("cheese");
   });
 
@@ -69,7 +82,7 @@ describe("jev_rank", () => {
 
     const call = model.calls[0]!;
     expect(call.state).toEqual({ query: "q", candidates: ["first", "second"] });
-    expect(Object.keys(call.questions).sort()).toEqual(["any_relevant", "cand_0", "cand_1"]);
+    expect(Object.keys(call.questions).sort()).toEqual(["any_relevant", "cand_0", "cand_1", "which"]);
     expect(JSON.stringify(call)).not.toContain("__proto__");
   });
 
@@ -125,14 +138,17 @@ describe("jev_rank", () => {
 
     const result = await rankTool.run(model, { query: "how?", candidates, top_k: 3 }, testConfig);
 
-    expect(result.chunks).toBeGreaterThan(1);
+    // Several fan-out batches plus one final deciding request.
+    expect(result.chunks).toBeGreaterThan(2);
     expect(model.calls).toHaveLength(result.chunks);
     for (const call of model.calls) {
       expect((call.state as { query: string }).query).toBe("how?");
     }
-    // Every candidate is judged exactly once across the chunks.
-    const judged = model.calls.reduce(
-      (total, call) => total + Object.keys(call.questions).length - 1,
+    // Every candidate is judged exactly once across the fan-out (the final
+    // request, the last call, re-judges only the batch winners).
+    const fanout = model.calls.slice(0, -1);
+    const judged = fanout.reduce(
+      (total, call) => total + Object.keys(call.questions).filter((key) => key.startsWith("cand_")).length,
       0,
     );
     expect(judged).toBe(20);
@@ -140,14 +156,17 @@ describe("jev_rank", () => {
     expect(result.ranked[0]!.id).toBe("c13");
   });
 
-  it("merges usage across chunks and takes the max any_relevant", async () => {
-    let call = 0;
+  it("sums usage across the fan-out and the final request, and judges any_relevant once", async () => {
     const model = new FakeModel((request) => {
-      call += 1;
       const answers: Record<string, Answer> = {};
+      let bestIndex = 0;
       for (const id of Object.keys(request.questions)) {
-        answers[id] = noul(id === "any_relevant" ? (call === 2 ? 0.93 : 0.11) : 0.2);
+        if (id.startsWith("cand_")) answers[id] = noul(0.2);
+        if (id === `cand_${bestIndex}`) bestIndex = Number(id.slice("cand_".length));
       }
+      if (request.questions.which !== undefined) answers.which = choice("0", { "0": 1 }, 1);
+      // Asked only in the final deciding request; not a max over the fan-out.
+      if (request.questions.any_relevant !== undefined) answers.any_relevant = noul(0.93);
       return answers;
     });
     const candidates = Array.from({ length: 20 }, (_v, i) => ({
@@ -157,6 +176,7 @@ describe("jev_rank", () => {
 
     const result = await rankTool.run(model, { query: "q", candidates }, testConfig);
 
+    expect(result.chunks).toBeGreaterThan(2);
     expect(result.any_relevant).toBe(0.93);
     expect(result.usage.input_tokens).toBe(100 * result.chunks);
     expect(result.latency_ms).toBeGreaterThanOrEqual(0);
@@ -213,7 +233,7 @@ describe("jev_rank", () => {
   it("scores a missing answer as 0 rather than throwing", async () => {
     const model = new FakeModel(() => ({ any_relevant: noul(0.4) }));
     const result = await rankTool.run(model, { query: "q", candidates: [{ id: "a", text: "t" }] }, testConfig);
-    expect(result.ranked).toEqual([{ id: "a", relevance: 0, rank: 1 }]);
+    expect(result.ranked).toEqual([{ id: "a", relevance: 0, rank: 1, choice: 0 }]);
   });
 
   it("validates its input bounds", () => {
@@ -235,5 +255,54 @@ describe("jev_rank", () => {
 
   it("keeps descriptions compact", () => {
     expect(rankTool.description.length).toBeLessThanOrEqual(1200);
+  });
+});
+
+describe("rank ordering helpers", () => {
+  const entry = (index: number): rankTool.Entry => ({ id: `c${index}`, text: `t${index}`, index });
+
+  it("choiceMargin is the top minus the runner-up, ignoring none", () => {
+    expect(rankTool.choiceMargin({ "0": 0.6, "1": 0.3, none: 0.1 })).toBe(0.3);
+    expect(rankTool.choiceMargin({ "0": 0.9 })).toBe(0.9);
+    expect(rankTool.choiceMargin({})).toBe(0);
+    // `none` never counts as the runner-up.
+    expect(rankTool.choiceMargin({ "0": 0.5, none: 0.5 })).toBe(0.5);
+  });
+
+  it("orderRows puts finalists first by final choice, then the tail by relevance", () => {
+    const e0 = entry(0);
+    const e1 = entry(1);
+    const e2 = entry(2);
+    const e3 = entry(3);
+    const all: rankTool.Placed[] = [
+      { entry: e0, relevance: 0.4, choice: 0.1 },
+      { entry: e1, relevance: 0.9, choice: 0.2 },
+      { entry: e2, relevance: 0.2, choice: 0 },
+      { entry: e3, relevance: 0.7, choice: 0 },
+    ];
+    const finalists = new Set([e0, e1]);
+    const finalChoice = new Map([
+      [e0, 0.8],
+      [e1, 0.15],
+    ]);
+    const ordered = rankTool.orderRows(all, finalists, finalChoice);
+    // Finalists by the deciding request's choice (e0 0.8 > e1 0.15), then the
+    // tail (e3 0.7 > e2 0.2) by relevance. Finalists' choice is the final value.
+    expect(ordered.map((row) => row.entry.id)).toEqual(["c0", "c1", "c3", "c2"]);
+    expect(ordered[0]!.choice).toBe(0.8);
+    expect(ordered[1]!.choice).toBe(0.15);
+  });
+
+  it("pickFinalists takes the top per request, trimmed to the budget", () => {
+    const req = (indices: number[], choices: number[]) => ({
+      scores: indices.map((i, k) => ({ entry: entry(i), relevance: 0.5, choice: choices[k] as number })),
+    });
+    const finalists = rankTool.pickFinalists(
+      [req([0, 1, 2, 3], [0.1, 0.9, 0.5, 0.2]), req([4, 5], [0.8, 0.3])],
+      "q",
+      undefined,
+    );
+    // Top 3 of the first request by choice (1, 2, 3) plus both of the second (4, 5).
+    expect(new Set(finalists.map((e) => e.id))).toEqual(new Set(["c1", "c2", "c3", "c4", "c5"]));
   });
 });

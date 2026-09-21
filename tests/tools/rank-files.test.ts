@@ -97,8 +97,8 @@ describe("jev_rank source selection", () => {
       config(),
     );
     expect(result.ranked).toEqual([
-      { id: "a", relevance: 0.9, rank: 1 },
-      { id: "b", relevance: 0.9, rank: 2 },
+      { id: "a", relevance: 0.9, rank: 1, choice: 0 },
+      { id: "b", relevance: 0.9, rank: 2, choice: 0 },
     ]);
     // The file-source fields stay absent, so a 0.1.x caller sees no change.
     expect(result.files_scanned).toBeUndefined();
@@ -121,10 +121,11 @@ describe("jev_rank over files", () => {
       end_line: 4,
       relevance: 0.95,
       rank: 1,
+      choice: 0,
     });
     for (const row of result.ranked) {
       expect(row.id).toBeUndefined();
-      expect(Object.keys(row).sort()).toEqual(["end_line", "path", "rank", "relevance", "start_line"]);
+      expect(Object.keys(row).sort()).toEqual(["choice", "end_line", "path", "rank", "relevance", "start_line"]);
     }
     expect(result.est_cost_usd).toBeGreaterThan(0);
   });
@@ -301,22 +302,27 @@ describe("jev_rank request batching", () => {
    * 0.87. Sixteen per request fixes it for no extra tokens, so the cap is the
    * thing worth protecting here.
    */
-  it("never puts more than the cap in one request, however many chunks there are", async () => {
-    for (let i = 0; i < 12; i += 1) {
-      writeFileSync(join(root, "src", `f${i}.ts`), Array.from({ length: 200 }, (_, n) => `// line ${n}`).join("\n"));
-    }
+  it("never puts more than the cap in one request, however many candidates there are", async () => {
+    // More short candidates than the cap, small enough that the budget would
+    // hold them all in one request: only the count cap splits them, into
+    // ceil(n / cap) fan-out batches plus one final deciding request.
+    const n = rankTool.MAX_CANDIDATES_PER_REQUEST + 30;
+    const candidates = Array.from({ length: n }, (_v, i) => ({ id: `c${i}`, text: `candidate ${i}` }));
     const model = new FakeModel(relevance(0.5));
-    const result = await rankTool.run(model, { query: "q", glob: "src/**/*.ts" }, config());
+    const result = await rankTool.run(model, { query: "q", candidates }, config());
 
-    expect(result.chunks_scored!).toBeGreaterThan(rankTool.MAX_CANDIDATES_PER_REQUEST);
+    const expectedFanout = Math.ceil(n / rankTool.MAX_CANDIDATES_PER_REQUEST);
+    expect(result.chunks).toBe(expectedFanout + 1);
     expect(model.calls.length).toBe(result.chunks);
-    for (const call of model.calls) {
-      const candidates = (call.state as { candidates: string[] }).candidates;
-      expect(candidates.length).toBeLessThanOrEqual(rankTool.MAX_CANDIDATES_PER_REQUEST);
+    const fanout = model.calls.slice(0, -1);
+    for (const call of fanout) {
+      const batch = (call.state as { candidates: string[] }).candidates;
+      expect(batch.length).toBeLessThanOrEqual(rankTool.MAX_CANDIDATES_PER_REQUEST);
     }
-    // Every chunk still gets judged exactly once.
-    const judged = model.calls.reduce((sum, call) => sum + (call.state as { candidates: string[] }).candidates.length, 0);
-    expect(judged).toBe(result.chunks_scored);
+    // Every candidate is judged exactly once across the fan-out.
+    const judged = fanout.reduce((sum, call) => sum + (call.state as { candidates: string[] }).candidates.length, 0);
+    expect(judged).toBe(n);
+    expect(result.total_candidates).toBe(n);
   });
 
   /**
