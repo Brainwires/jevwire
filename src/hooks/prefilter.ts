@@ -1393,7 +1393,7 @@ export interface PrefilterInput {
   strict: boolean;
 }
 
-const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "Update"]);
+export const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "Update"]);
 
 /**
  * Take the affirmation marker off a Bash command, if it has one.

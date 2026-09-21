@@ -23,7 +23,8 @@
 
 import { gateOutcome, bands, NOTE_DEDUPE_TTL_MS } from "../advisory.js";
 import { runGateAction, type GateAction, type GateContext, type GateRequest } from "../../tools/gate-action-core.js";
-import { prefilter, SPAWN_TOOLS, structuredAction } from "../prefilter.js";
+import { FILE_TOOLS, prefilter, SPAWN_TOOLS, structuredAction } from "../prefilter.js";
+import { handleLint } from "./lint.js";
 import { compactJson, redact, redactAndClamp } from "../redact.js";
 import { modelCost, MAX_PROMPT_CHARS } from "../store.js";
 import type { DecisionRecord } from "../store.js";
@@ -56,12 +57,12 @@ const PROMPTLESS_MODES = new Set(["dontAsk", "bypassPermissions"]);
  * that statically, because "the hooks never prompt" is the promise of this
  * release and a second occurrence of that string is how it would quietly break.
  */
-function tripChannel(askOnTrip: boolean, mode: string | undefined): EscalatingDecision {
+export function tripChannel(askOnTrip: boolean, mode: string | undefined): EscalatingDecision {
   return askOnTrip && !PROMPTLESS_MODES.has(mode ?? "default") ? "ask" : "deny";
 }
 
 /** A trip: the text goes in the reason, where a blocked call can still show it. */
-function tripOutput(channel: EscalatingDecision, reason: string): HookOutput {
+export function tripOutput(channel: EscalatingDecision, reason: string): HookOutput {
   return {
     hookSpecificOutput: {
       hookEventName: "PreToolUse",
@@ -72,7 +73,7 @@ function tripOutput(channel: EscalatingDecision, reason: string): HookOutput {
 }
 
 /** A note: delivered with the tool result, with no permission decision at all. */
-function noteOutput(text: string): HookOutput {
+export function noteOutput(text: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: text } };
 }
 
@@ -186,7 +187,15 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     return undefined;
   }
 
-  if (verdict.kind === "skip") return undefined;
+  // An in-project file write is a skip for the gate (it destroys nothing and
+  // reaches nowhere) but the place the semantic lint runs. It has its own
+  // trip lifecycle, sharing the fingerprint and the sidecar affirmation.
+  if (verdict.kind === "skip") {
+    if (verdict.writesInProject === true && FILE_TOOLS.has(toolName) && config.lint !== "off") {
+      return handleLint(input, deps, action, base, now);
+    }
+    return undefined;
+  }
 
   const fp = fingerprint(toolName, action);
   const open = store.findTripByFingerprint(sessionId, fp, now);

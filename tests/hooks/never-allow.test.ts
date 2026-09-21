@@ -182,7 +182,7 @@ describe("no handler output contains allow, and none asks by default", () => {
   function fuzzInput(name: string, mode: string, tool: string, toolInput: Record<string, unknown>): HookInput {
     return {
       session_id: "s1",
-      cwd: "/home/dev/project",
+      cwd: "/tmp/jev-fuzz-project",
       permission_mode: mode,
       hook_event_name: name,
       tool_name: tool,
