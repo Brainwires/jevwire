@@ -10,6 +10,25 @@ negations and implied conditions are read at face value. When you look at a wron
 answer and find yourself explaining what you really meant, that explanation is the
 missing half of your instruction — put it in.
 
+## System 1 only
+
+Jev is a System 1 model (fast, intuitive, calibrated) — not System 2 (deliberate,
+multi-step). Every question you ask it must be **one intuitive judgment over text it
+can point at**. Anything else stays in code:
+
+- **Counting → code.** Never ask "how many". If a regex or parser can find the thing,
+  count the matches yourself. To judge many items, iterate in code and ask one
+  question per item, then add up the answers.
+- **Presence, then meaning.** Let a regex decide whether a pattern is *present*; ask
+  Jev only whether it *matters* ("is this a new suppression that hides a real error?"),
+  never "find the `any`s".
+- **Arithmetic, dates, ordering, existence → code.** Extraction is a judgment (give it
+  to Jev as a Choice over enumerated options with a `not_stated` escape hatch);
+  comparing, sorting, subtracting and "does this file exist" are not.
+- **One hop.** A question about a property of a property, or that needs a chain of
+  inference, loses accuracy. Split it into literal questions and combine them in code —
+  the way the Stop check asks seven single questions instead of one compound one.
+
 ## Question types
 
 - **Noul** — one probability, P(yes). No separate confidence: a confident *no* is

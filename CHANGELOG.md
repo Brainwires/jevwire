@@ -7,6 +7,45 @@ documented in this file. The npm package is published as `jevwire` and the Claud
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] — 2026-09-21, code development
+
+The first half of the "code development" work from `docs/DESIGN_0.6.md`: better ranking, a tool for
+choosing one candidate, and a Stop check that catches a final message describing work that is not in
+the workspace. The semantic code-lint battery and `pr_scope` (the second half of the design) follow in
+0.6.1, where their note volume can be measured on their own.
+
+Every question added here is a single System-1 judgment — a literal reading of pointed-at text — with
+all counting, ordering, arithmetic and existence checks kept in code, per Jev's own jaggedness page.
+
+### Added
+
+- **`jev_pick`** — choose one candidate from a list you already have (grep hits, symbols, failing test
+  names, paths) instead of guessing. One Choice over the candidate indices plus a `none` escape hatch,
+  and an absolute `fits` yes/no per candidate; `pick` is always one of your ids or null. One request,
+  never chunked: an over-budget set is a `BudgetError` with no call made.
+- **Stop-time claim verification.** When the final message names a file, an identifier, or a change,
+  the Stop hook now checks it against the workspace. Stage 1 is deterministic and needs no model: a
+  named file that is not in the project, or a "removed X" about a file that is still there and
+  untouched, is a fabrication caught in code. Stage 2 (`verify_claims`, default on) reads `git diff
+  HEAD` with the model and blocks only on a firm contradiction. Precedence is stop-short → the
+  verification ledger → claims, still at most one block per prompt. `src/hooks/workspace.ts` is a new
+  hook-safe reader with the same refusals as the MCP file layer (sensitive paths, inside-cwd via
+  realpath, size cap) plus git through `execFile` with `GIT_EXTERNAL_DIFF`/`GIT_PAGER` stripped.
+
+### Changed
+
+- **`jev_rank` orders by a relative Choice, not the per-candidate yes/no.** Each batch answers a
+  `which` Choice ("which entry best helps"), and the batch winners are reconciled by one final Choice —
+  a System-1 "which of these" instead of an absolute Noul battery that went flat past ~50 candidates.
+  `relevance` stays the absolute yes/no that `min_relevance` filters on; new `choice` (per row) and
+  `choice_margin` (top minus runner-up in the deciding request — below 0.10 the top two were a toss-up)
+  report how clear the pick was. `any_relevant` is judged once over the finalists, not maxed across
+  batches. The per-request cap is raised 16 → 200 (the context budget binds first for file chunks).
+- **`jev_verify` is split** into a zod-free, file-layer-free `verify-core` (the rubric, the evidence
+  packer, the merge, and a `runVerifyCore`) that the Stop check reuses, and the unchanged MCP tool.
+- New config: `verify_claims` (default true) gates the model half of the Stop check; `lint` and
+  `lint_conventions` are read for 0.6.1 and inert until then.
+
 ## [0.5.2] — 2026-09-18
 
 ### Fixed

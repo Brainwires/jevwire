@@ -13,8 +13,8 @@ var __commonJS = (cb, mod) => function __require() {
   }
 };
 var __export = (target, all) => {
-  for (var name7 in all)
-    __defProp(target, name7, { get: all[name7], enumerable: true });
+  for (var name8 in all)
+    __defProp(target, name8, { get: all[name8], enumerable: true });
 };
 var __copyProps = (to, from, except, desc) => {
   if (from && typeof from === "object" || typeof from === "function") {
@@ -195,9 +195,9 @@ var require_scope = __commonJS({
     exports.ValueScope = exports.ValueScopeName = exports.Scope = exports.varKinds = exports.UsedValueState = void 0;
     var code_1 = require_code();
     var ValueError = class extends Error {
-      constructor(name7) {
-        super(`CodeGen: "code" for ${name7} not defined`);
-        this.value = name7.value;
+      constructor(name8) {
+        super(`CodeGen: "code" for ${name8} not defined`);
+        this.value = name8.value;
       }
     };
     var UsedValueState;
@@ -264,8 +264,8 @@ var require_scope = __commonJS({
         var _a3;
         if (value.ref === void 0)
           throw new Error("CodeGen: ref must be passed in value");
-        const name7 = this.toName(nameOrPrefix);
-        const { prefix } = name7;
+        const name8 = this.toName(nameOrPrefix);
+        const { prefix } = name8;
         const valueKey = (_a3 = value.key) !== null && _a3 !== void 0 ? _a3 : value.ref;
         let vs = this._values[prefix];
         if (vs) {
@@ -275,12 +275,12 @@ var require_scope = __commonJS({
         } else {
           vs = this._values[prefix] = /* @__PURE__ */ new Map();
         }
-        vs.set(valueKey, name7);
+        vs.set(valueKey, name8);
         const s = this._scope[prefix] || (this._scope[prefix] = []);
         const itemIndex = s.length;
         s[itemIndex] = value.ref;
-        name7.setValue(value, { property: prefix, itemIndex });
-        return name7;
+        name8.setValue(value, { property: prefix, itemIndex });
+        return name8;
       }
       getValue(prefix, keyOrRef) {
         const vs = this._values[prefix];
@@ -289,17 +289,17 @@ var require_scope = __commonJS({
         return vs.get(keyOrRef);
       }
       scopeRefs(scopeName, values = this._values) {
-        return this._reduceValues(values, (name7) => {
-          if (name7.scopePath === void 0)
-            throw new Error(`CodeGen: name "${name7}" has no value`);
-          return (0, code_1._)`${scopeName}${name7.scopePath}`;
+        return this._reduceValues(values, (name8) => {
+          if (name8.scopePath === void 0)
+            throw new Error(`CodeGen: name "${name8}" has no value`);
+          return (0, code_1._)`${scopeName}${name8.scopePath}`;
         });
       }
       scopeCode(values = this._values, usedValues, getCode) {
-        return this._reduceValues(values, (name7) => {
-          if (name7.value === void 0)
-            throw new Error(`CodeGen: name "${name7}" has no value`);
-          return name7.value.code;
+        return this._reduceValues(values, (name8) => {
+          if (name8.value === void 0)
+            throw new Error(`CodeGen: name "${name8}" has no value`);
+          return name8.value.code;
         }, usedValues, getCode);
       }
       _reduceValues(values, valueCode, usedValues = {}, getCode) {
@@ -309,20 +309,20 @@ var require_scope = __commonJS({
           if (!vs)
             continue;
           const nameSet = usedValues[prefix] = usedValues[prefix] || /* @__PURE__ */ new Map();
-          vs.forEach((name7) => {
-            if (nameSet.has(name7))
+          vs.forEach((name8) => {
+            if (nameSet.has(name8))
               return;
-            nameSet.set(name7, UsedValueState.Started);
-            let c = valueCode(name7);
+            nameSet.set(name8, UsedValueState.Started);
+            let c = valueCode(name8);
             if (c) {
               const def = this.opts.es5 ? exports.varKinds.var : exports.varKinds.const;
-              code = (0, code_1._)`${code}${def} ${name7} = ${c};${this.opts._n}`;
-            } else if (c = getCode === null || getCode === void 0 ? void 0 : getCode(name7)) {
+              code = (0, code_1._)`${code}${def} ${name8} = ${c};${this.opts._n}`;
+            } else if (c = getCode === null || getCode === void 0 ? void 0 : getCode(name8)) {
               code = (0, code_1._)`${code}${c}${this.opts._n}`;
             } else {
-              throw new ValueError(name7);
+              throw new ValueError(name8);
             }
-            nameSet.set(name7, UsedValueState.Completed);
+            nameSet.set(name8, UsedValueState.Completed);
           });
         }
         return code;
@@ -399,10 +399,10 @@ var require_codegen = __commonJS({
       }
     };
     var Def = class extends Node {
-      constructor(varKind, name7, rhs) {
+      constructor(varKind, name8, rhs) {
         super();
         this.varKind = varKind;
-        this.name = name7;
+        this.name = name8;
         this.rhs = rhs;
       }
       render({ es5, _n }) {
@@ -622,17 +622,17 @@ var require_codegen = __commonJS({
       }
     };
     var ForRange = class extends For {
-      constructor(varKind, name7, from, to) {
+      constructor(varKind, name8, from, to) {
         super();
         this.varKind = varKind;
-        this.name = name7;
+        this.name = name8;
         this.from = from;
         this.to = to;
       }
       render(opts) {
         const varKind = opts.es5 ? scope_1.varKinds.var : this.varKind;
-        const { name: name7, from, to } = this;
-        return `for(${varKind} ${name7}=${from}; ${name7}<${to}; ${name7}++)` + super.render(opts);
+        const { name: name8, from, to } = this;
+        return `for(${varKind} ${name8}=${from}; ${name8}<${to}; ${name8}++)` + super.render(opts);
       }
       get names() {
         const names = addExprNames(super.names, this.from);
@@ -640,11 +640,11 @@ var require_codegen = __commonJS({
       }
     };
     var ForIter = class extends For {
-      constructor(loop, varKind, name7, iterable) {
+      constructor(loop, varKind, name8, iterable) {
         super();
         this.loop = loop;
         this.varKind = varKind;
-        this.name = name7;
+        this.name = name8;
         this.iterable = iterable;
       }
       render(opts) {
@@ -661,9 +661,9 @@ var require_codegen = __commonJS({
       }
     };
     var Func = class extends BlockNode {
-      constructor(name7, args, async) {
+      constructor(name8, args, async) {
         super();
-        this.name = name7;
+        this.name = name8;
         this.args = args;
         this.async = async;
       }
@@ -750,10 +750,10 @@ var require_codegen = __commonJS({
       }
       // reserves unique name in the external scope and assigns value to it
       scopeValue(prefixOrName, value) {
-        const name7 = this._extScope.value(prefixOrName, value);
-        const vs = this._values[name7.prefix] || (this._values[name7.prefix] = /* @__PURE__ */ new Set());
-        vs.add(name7);
-        return name7;
+        const name8 = this._extScope.value(prefixOrName, value);
+        const vs = this._values[name8.prefix] || (this._values[name8.prefix] = /* @__PURE__ */ new Set());
+        vs.add(name8);
+        return name8;
       }
       getScopeValue(prefix, keyOrRef) {
         return this._extScope.getValue(prefix, keyOrRef);
@@ -767,11 +767,11 @@ var require_codegen = __commonJS({
         return this._extScope.scopeCode(this._values);
       }
       _def(varKind, nameOrPrefix, rhs, constant) {
-        const name7 = this._scope.toName(nameOrPrefix);
+        const name8 = this._scope.toName(nameOrPrefix);
         if (rhs !== void 0 && constant)
-          this._constants[name7.str] = rhs;
-        this._leafNode(new Def(varKind, name7, rhs));
-        return name7;
+          this._constants[name8.str] = rhs;
+        this._leafNode(new Def(varKind, name8, rhs));
+        return name8;
       }
       // `const` declaration (`var` in es5 mode)
       const(nameOrPrefix, rhs, _constant) {
@@ -852,20 +852,20 @@ var require_codegen = __commonJS({
       }
       // `for` statement for a range of values
       forRange(nameOrPrefix, from, to, forBody, varKind = this.opts.es5 ? scope_1.varKinds.var : scope_1.varKinds.let) {
-        const name7 = this._scope.toName(nameOrPrefix);
-        return this._for(new ForRange(varKind, name7, from, to), () => forBody(name7));
+        const name8 = this._scope.toName(nameOrPrefix);
+        return this._for(new ForRange(varKind, name8, from, to), () => forBody(name8));
       }
       // `for-of` statement (in es5 mode replace with a normal for loop)
       forOf(nameOrPrefix, iterable, forBody, varKind = scope_1.varKinds.const) {
-        const name7 = this._scope.toName(nameOrPrefix);
+        const name8 = this._scope.toName(nameOrPrefix);
         if (this.opts.es5) {
           const arr = iterable instanceof code_1.Name ? iterable : this.var("_arr", iterable);
           return this.forRange("_i", 0, (0, code_1._)`${arr}.length`, (i) => {
-            this.var(name7, (0, code_1._)`${arr}[${i}]`);
-            forBody(name7);
+            this.var(name8, (0, code_1._)`${arr}[${i}]`);
+            forBody(name8);
           });
         }
-        return this._for(new ForIter("of", varKind, name7, iterable), () => forBody(name7));
+        return this._for(new ForIter("of", varKind, name8, iterable), () => forBody(name8));
       }
       // `for-in` statement.
       // With option `ownProperties` replaced with a `for-of` loop for object keys
@@ -873,8 +873,8 @@ var require_codegen = __commonJS({
         if (this.opts.ownProperties) {
           return this.forOf(nameOrPrefix, (0, code_1._)`Object.keys(${obj})`, forBody);
         }
-        const name7 = this._scope.toName(nameOrPrefix);
-        return this._for(new ForIter("in", varKind, name7, obj), () => forBody(name7));
+        const name8 = this._scope.toName(nameOrPrefix);
+        return this._for(new ForIter("in", varKind, name8, obj), () => forBody(name8));
       }
       // end `for` loop
       endFor() {
@@ -939,8 +939,8 @@ var require_codegen = __commonJS({
         return this;
       }
       // `function` heading (or definition if funcBody is passed)
-      func(name7, args = code_1.nil, async, funcBody) {
-        this._blockNode(new Func(name7, args, async));
+      func(name8, args = code_1.nil, async, funcBody) {
+        this._blockNode(new Func(name8, args, async));
         if (funcBody)
           this.code(funcBody).endFunc();
         return this;
@@ -3622,10 +3622,10 @@ var require_schemes = __commonJS({
         "urn:uuid"
       ]
     );
-    function isValidSchemeName(name7) {
+    function isValidSchemeName(name8) {
       return supportedSchemeNames.indexOf(
         /** @type {*} */
-        name7
+        name8
       ) !== -1;
     }
     function wsIsSecure(wsComponent) {
@@ -4616,10 +4616,10 @@ var require_core = __commonJS({
         return this;
       }
       // Add format
-      addFormat(name7, format) {
+      addFormat(name8, format) {
         if (typeof format == "string")
           format = new RegExp(format);
-        this.formats[name7] = format;
+        this.formats[name8] = format;
         return this;
       }
       errorsText(errors = this.errors, { separator = ", ", dataVar = "data" } = {}) {
@@ -4736,10 +4736,10 @@ var require_core = __commonJS({
           this.addSchema(optsSchemas[key], key);
     }
     function addInitialFormats() {
-      for (const name7 in this.opts.formats) {
-        const format = this.opts.formats[name7];
+      for (const name8 in this.opts.formats) {
+        const format = this.opts.formats[name8];
         if (format)
-          this.addFormat(name7, format);
+          this.addFormat(name8, format);
       }
     }
     function addInitialKeywords(defs) {
@@ -7179,11 +7179,11 @@ var require_dist = __commonJS({
         (0, limit_1.default)(ajv);
       return ajv;
     };
-    formatsPlugin.get = (name7, mode = "full") => {
+    formatsPlugin.get = (name8, mode = "full") => {
       const formats = mode === "fast" ? formats_1.fastFormats : formats_1.fullFormats;
-      const f = formats[name7];
+      const f = formats[name8];
       if (!f)
-        throw new Error(`Unknown format "${name7}"`);
+        throw new Error(`Unknown format "${name8}"`);
       return f;
     };
     function addFormats(ajv, list, fs, exportName) {
@@ -8320,12 +8320,12 @@ function merge(a, b) {
   });
   return clone(a, def);
 }
-function partial(Class2, schema, mask, name7 = "partial") {
+function partial(Class2, schema, mask, name8 = "partial") {
   const currDef = schema._zod.def;
   const checks = currDef.checks;
   const hasChecks = checks && checks.length > 0;
   if (hasChecks) {
-    throw new Error(`.${name7}() cannot be used on object schemas containing refinements`);
+    throw new Error(`.${name8}() cannot be used on object schemas containing refinements`);
   }
   const selected = mask ? new Set(maskedKeys(schema, mask)) : void 0;
   const newShape = {};
@@ -8653,7 +8653,7 @@ function newError(Definition) {
   return new Definition();
 }
 // @__NO_SIDE_EFFECTS__
-function $constructor(name7, initializer3, proto, params) {
+function $constructor(name8, initializer3, proto, params) {
   const zodProto = {};
   function Internals(def) {
     this.def = def;
@@ -8671,10 +8671,10 @@ function $constructor(name7, initializer3, proto, params) {
       } finally {
         _zodDesc.value = void 0;
       }
-    } else if (inst._zod.traits.has(name7)) {
+    } else if (inst._zod.traits.has(name8)) {
       return;
     }
-    inst._zod.traits.add(name7);
+    inst._zod.traits.add(name8);
     initializer3(inst, def);
     if (initialized) {
       const own2 = Object.getPrototypeOf(inst);
@@ -8700,7 +8700,7 @@ function $constructor(name7, initializer3, proto, params) {
   const Parent = params?.Parent ?? Object;
   class Definition extends Parent {
   }
-  Object.defineProperty(Definition, "name", { value: name7 });
+  Object.defineProperty(Definition, "name", { value: name8 });
   function _(def) {
     const inst = params?.Parent ? newError(Definition) : this;
     init(inst, def);
@@ -8721,10 +8721,10 @@ function $constructor(name7, initializer3, proto, params) {
     value: (inst) => {
       if (params?.Parent && inst instanceof params.Parent)
         return true;
-      return inst?._zod?.traits?.has(name7);
+      return inst?._zod?.traits?.has(name8);
     }
   });
-  Object.defineProperty(_, "name", { value: name7 });
+  Object.defineProperty(_, "name", { value: name8 });
   return _;
 }
 var $brand = /* @__PURE__ */ Symbol("zod_brand");
@@ -8734,8 +8734,8 @@ var $ZodAsyncError = class extends Error {
   }
 };
 var $ZodEncodeError = class extends Error {
-  constructor(name7) {
-    super(`Encountered unidirectional transform during encode: ${name7}`);
+  constructor(name8) {
+    super(`Encountered unidirectional transform during encode: ${name8}`);
     this.name = "ZodEncodeError";
   }
 };
@@ -20234,13 +20234,13 @@ ${code}
   return fn;
 }
 function addConstant(ctx, value) {
-  for (const [name8, v] of ctx.constants) {
+  for (const [name9, v] of ctx.constants) {
     if (v === value)
-      return name8;
+      return name9;
   }
-  const name7 = `c${ctx.constantCounter++}`;
-  ctx.constants.set(name7, value);
-  return name7;
+  const name8 = `c${ctx.constantCounter++}`;
+  ctx.constants.set(name8, value);
+  return name8;
 }
 function addUserConstant(ctx, fn) {
   ctx.definite = false;
@@ -22668,12 +22668,12 @@ function _check(fn, params) {
   return ch;
 }
 // @__NO_SIDE_EFFECTS__
-function describe(description7) {
+function describe(description8) {
   const ch = new $ZodCheck({ check: "describe" });
   ch._zod.onattach = [
     (inst) => {
       const existing = globalRegistry.get(inst) ?? {};
-      globalRegistry.add(inst, { ...existing, description: description7 });
+      globalRegistry.add(inst, { ...existing, description: description8 });
     }
   ];
   ch._zod.check = () => {
@@ -24488,9 +24488,9 @@ var ZodType = /* @__PURE__ */ $constructor("ZodType", (inst, def) => {
   readonly() {
     return readonly(this);
   },
-  describe(description7) {
+  describe(description8) {
     const cl = this.clone();
-    globalRegistry.add(cl, { description: description7 });
+    globalRegistry.add(cl, { description: description8 });
     return cl;
   },
   meta(...args) {
@@ -26656,7 +26656,7 @@ function visit(schema, fnOrHandlers) {
     return h ? h(node2, rewritten) : node2;
   };
   const cache = /* @__PURE__ */ new Map();
-  function run7(s) {
+  function run8(s) {
     const cached2 = cache.get(s);
     if (cached2 === RESOLVING) {
       return new $ZodLazy({
@@ -26682,21 +26682,21 @@ function visit(schema, fnOrHandlers) {
         let changed = false;
         const newShape = {};
         for (const k of keys) {
-          const mapped = run7(oldShape[k]);
+          const mapped = run8(oldShape[k]);
           if (mapped !== oldShape[k])
             changed = true;
           newShape[k] = mapped;
         }
         let newCatchall = def.catchall;
         if (def.catchall) {
-          newCatchall = run7(def.catchall);
+          newCatchall = run8(def.catchall);
           if (newCatchall !== def.catchall)
             changed = true;
         }
         return changed ? clone(s, { ...def, shape: newShape, catchall: newCatchall }) : s;
       }
       case "array": {
-        const mapped = run7(def.element);
+        const mapped = run8(def.element);
         return mapped === def.element ? s : clone(s, { ...def, element: mapped });
       }
       case "tuple": {
@@ -26704,14 +26704,14 @@ function visit(schema, fnOrHandlers) {
         let changed = false;
         const newItems = [];
         for (const item of oldItems) {
-          const mapped = run7(item);
+          const mapped = run8(item);
           if (mapped !== item)
             changed = true;
           newItems.push(mapped);
         }
         let newRest = def.rest;
         if (def.rest) {
-          newRest = run7(def.rest);
+          newRest = run8(def.rest);
           if (newRest !== def.rest)
             changed = true;
         }
@@ -26719,12 +26719,12 @@ function visit(schema, fnOrHandlers) {
       }
       case "record":
       case "map": {
-        const newKey = run7(def.keyType);
-        const newVal = run7(def.valueType);
+        const newKey = run8(def.keyType);
+        const newVal = run8(def.valueType);
         return newKey === def.keyType && newVal === def.valueType ? s : clone(s, { ...def, keyType: newKey, valueType: newVal });
       }
       case "set": {
-        const newVal = run7(def.valueType);
+        const newVal = run8(def.valueType);
         return newVal === def.valueType ? s : clone(s, { ...def, valueType: newVal });
       }
       case "union": {
@@ -26732,7 +26732,7 @@ function visit(schema, fnOrHandlers) {
         let changed = false;
         const newOptions = [];
         for (const opt of oldOptions) {
-          const mapped = run7(opt);
+          const mapped = run8(opt);
           if (mapped !== opt)
             changed = true;
           newOptions.push(mapped);
@@ -26740,8 +26740,8 @@ function visit(schema, fnOrHandlers) {
         return changed ? clone(s, { ...def, options: newOptions }) : s;
       }
       case "intersection": {
-        const newLeft = run7(def.left);
-        const newRight = run7(def.right);
+        const newLeft = run8(def.left);
+        const newRight = run8(def.right);
         return newLeft === def.left && newRight === def.right ? s : clone(s, { ...def, left: newLeft, right: newRight });
       }
       case "optional":
@@ -26753,23 +26753,23 @@ function visit(schema, fnOrHandlers) {
       case "nonoptional":
       case "promise":
       case "success": {
-        const newInner = run7(def.innerType);
+        const newInner = run8(def.innerType);
         return newInner === def.innerType ? s : clone(s, { ...def, innerType: newInner });
       }
       case "pipe": {
-        const newIn = run7(def.in);
-        const newOut = run7(def.out);
+        const newIn = run8(def.in);
+        const newOut = run8(def.out);
         return newIn === def.in && newOut === def.out ? s : clone(s, { ...def, in: newIn, out: newOut });
       }
       case "function": {
-        const newInput = run7(def.input);
-        const newOutput = run7(def.output);
+        const newInput = run8(def.input);
+        const newOutput = run8(def.output);
         return newInput === def.input && newOutput === def.output ? s : clone(s, { ...def, input: newInput, output: newOutput });
       }
       case "lazy": {
         const original = def.getter;
         const { _cachedInner, ...rest } = def;
-        return clone(s, { ...rest, getter: () => run7(original()) });
+        return clone(s, { ...rest, getter: () => run8(original()) });
       }
       // A leaf by choice: `parts` are regex fragments, not data positions.
       case "template_literal":
@@ -26800,7 +26800,7 @@ function visit(schema, fnOrHandlers) {
       }
     }
   }
-  return run7(schema);
+  return run8(schema);
 }
 
 // node_modules/zod/v4/classic/deep-partial.js
@@ -28748,9 +28748,9 @@ function compilePattern(pattern) {
   }));
   return { segments };
 }
-function step(pattern, states, name7) {
+function step(pattern, states, name8) {
   const next = /* @__PURE__ */ new Set();
-  const hidden = name7.startsWith(".");
+  const hidden = name8.startsWith(".");
   for (const state of states) {
     const segment = pattern.segments[state];
     if (segment === void 0) continue;
@@ -28760,12 +28760,12 @@ function step(pattern, states, name7) {
         const target = pattern.segments[forward];
         if (target === void 0) continue;
         if (hidden && !target.dot) continue;
-        if (target.regex.test(name7)) next.add(forward + 1);
+        if (target.regex.test(name8)) next.add(forward + 1);
       }
       continue;
     }
     if (hidden && !segment.dot) continue;
-    if (segment.regex.test(name7)) next.add(state + 1);
+    if (segment.regex.test(name8)) next.add(state + 1);
   }
   return [...next];
 }
@@ -29180,6 +29180,7 @@ var WAIT_MS = 2e3;
 
 // src/hooks/config.ts
 var GATE_LEVELS = ["off", "advisory", "strict"];
+var LINT_LEVELS = ["off", "tripwire", "advisory"];
 var GATE_MODE_MIGRATION = {
   off: "off",
   standard: "advisory",
@@ -29202,6 +29203,9 @@ var HOOK_DEFAULTS = {
   stopCheck: true,
   screenResults: true,
   routePrompts: false,
+  lint: "advisory",
+  lintConventions: true,
+  verifyClaims: true,
   autoThreshold: 0.85,
   reviewThreshold: 0.6,
   confidenceThreshold: 0.85,
@@ -29251,6 +29255,13 @@ function installIdFromScriptPath(scriptPath) {
   const plugin = parts[cache + 2];
   if (!marketplace || !plugin || parts.length < cache + 5) return void 0;
   return `${plugin}@${marketplace}`.replace(/[^A-Za-z0-9_-]/g, "-");
+}
+function readLint(env, warnings) {
+  const raw = read(env, "lint", "JEV_LINT");
+  if (raw === void 0) return HOOK_DEFAULTS.lint;
+  if (LINT_LEVELS.includes(raw)) return raw;
+  warnings.push(`lint=${JSON.stringify(raw)} is not one of off|tripwire|advisory; using ${HOOK_DEFAULTS.lint}.`);
+  return HOOK_DEFAULTS.lint;
 }
 function loadHookConfig(env = process.env) {
   const warnings = [];
@@ -29302,6 +29313,9 @@ function loadHookConfig(env = process.env) {
     stopCheck: readBool(env, "stop_check", HOOK_DEFAULTS.stopCheck, warnings, "JEV_STOP_CHECK"),
     screenResults: readBool(env, "screen_results", HOOK_DEFAULTS.screenResults, warnings, "JEV_SCREEN_RESULTS"),
     routePrompts: readBool(env, "route_prompts", HOOK_DEFAULTS.routePrompts, warnings, "JEV_ROUTE_PROMPTS"),
+    lint: readLint(env, warnings),
+    lintConventions: readBool(env, "lint_conventions", HOOK_DEFAULTS.lintConventions, warnings, "JEV_LINT_CONVENTIONS"),
+    verifyClaims: readBool(env, "verify_claims", HOOK_DEFAULTS.verifyClaims, warnings, "JEV_VERIFY_CLAIMS"),
     autoThreshold: auto,
     reviewThreshold: Math.min(review, auto),
     confidenceThreshold: readNumber2(
@@ -29479,7 +29493,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.5.2";
+var HOOK_VERSION = "0.6.0";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
@@ -30731,12 +30745,12 @@ var handleResult = (ctx, result) => {
 function processCreateParams(params) {
   if (!params)
     return {};
-  const { errorMap: errorMap2, invalid_type_error, required_error, description: description7 } = params;
+  const { errorMap: errorMap2, invalid_type_error, required_error, description: description8 } = params;
   if (errorMap2 && (invalid_type_error || required_error)) {
     throw new Error(`Can't use "invalid_type_error" or "required_error" in conjunction with custom error map.`);
   }
   if (errorMap2)
-    return { errorMap: errorMap2, description: description7 };
+    return { errorMap: errorMap2, description: description8 };
   const customMap = (iss, ctx) => {
     const { message } = params;
     if (iss.code === "invalid_enum_value") {
@@ -30749,7 +30763,7 @@ function processCreateParams(params) {
       return { message: ctx.defaultError };
     return { message: message ?? invalid_type_error ?? ctx.defaultError };
   };
-  return { errorMap: customMap, description: description7 };
+  return { errorMap: customMap, description: description8 };
 }
 var ZodType2 = class {
   get description() {
@@ -31014,11 +31028,11 @@ var ZodType2 = class {
       typeName: ZodFirstPartyTypeKind2.ZodCatch
     });
   }
-  describe(description7) {
+  describe(description8) {
     const This = this.constructor;
     return new This({
       ...this._def,
-      description: description7
+      description: description8
     });
   }
   pipe(target) {
@@ -34370,11 +34384,11 @@ var getRefs = (options) => {
     flags: { hasReferencedOpenAiAnyType: false },
     currentPath,
     propertyPath: void 0,
-    seen: new Map(Object.entries(_options.definitions).map(([name7, def]) => [
+    seen: new Map(Object.entries(_options.definitions).map(([name8, def]) => [
       def._def,
       {
         def: def._def,
-        path: [..._options.basePath, _options.definitionPath, name7],
+        path: [..._options.basePath, _options.definitionPath, name8],
         // Resolution of references will be forced even though seen, so it's ok that the schema is undefined here for now.
         jsonSchema: void 0
       }
@@ -35552,17 +35566,17 @@ var addMeta = (def, refs, jsonSchema) => {
 // node_modules/zod-to-json-schema/dist/esm/zodToJsonSchema.js
 var zodToJsonSchema = (schema, options) => {
   const refs = getRefs(options);
-  let definitions = typeof options === "object" && options.definitions ? Object.entries(options.definitions).reduce((acc, [name8, schema2]) => ({
+  let definitions = typeof options === "object" && options.definitions ? Object.entries(options.definitions).reduce((acc, [name9, schema2]) => ({
     ...acc,
-    [name8]: parseDef(schema2._def, {
+    [name9]: parseDef(schema2._def, {
       ...refs,
-      currentPath: [...refs.basePath, refs.definitionPath, name8]
+      currentPath: [...refs.basePath, refs.definitionPath, name9]
     }, true) ?? parseAnyDef(refs)
   }), {}) : void 0;
-  const name7 = typeof options === "string" ? options : options?.nameStrategy === "title" ? void 0 : options?.name;
-  const main2 = parseDef(schema._def, name7 === void 0 ? refs : {
+  const name8 = typeof options === "string" ? options : options?.nameStrategy === "title" ? void 0 : options?.name;
+  const main2 = parseDef(schema._def, name8 === void 0 ? refs : {
     ...refs,
-    currentPath: [...refs.basePath, refs.definitionPath, name7]
+    currentPath: [...refs.basePath, refs.definitionPath, name8]
   }, false) ?? parseAnyDef(refs);
   const title = typeof options === "object" && options.name !== void 0 && options.nameStrategy === "title" ? options.name : void 0;
   if (title !== void 0) {
@@ -35586,18 +35600,18 @@ var zodToJsonSchema = (schema, options) => {
       };
     }
   }
-  const combined = name7 === void 0 ? definitions ? {
+  const combined = name8 === void 0 ? definitions ? {
     ...main2,
     [refs.definitionPath]: definitions
   } : main2 : {
     $ref: [
       ...refs.$refStrategy === "relative" ? [] : refs.basePath,
       refs.definitionPath,
-      name7
+      name8
     ].join("/"),
     [refs.definitionPath]: {
       ...definitions,
-      [name7]: main2
+      [name8]: main2
     }
   };
   if (refs.target === "jsonSchema7") {
@@ -37310,34 +37324,34 @@ var McpZodTypeKind;
 
 // node_modules/@modelcontextprotocol/sdk/dist/esm/shared/toolNameValidation.js
 var TOOL_NAME_REGEX = /^[A-Za-z0-9._-]{1,128}$/;
-function validateToolName(name7) {
+function validateToolName(name8) {
   const warnings = [];
-  if (name7.length === 0) {
+  if (name8.length === 0) {
     return {
       isValid: false,
       warnings: ["Tool name cannot be empty"]
     };
   }
-  if (name7.length > 128) {
+  if (name8.length > 128) {
     return {
       isValid: false,
-      warnings: [`Tool name exceeds maximum length of 128 characters (current: ${name7.length})`]
+      warnings: [`Tool name exceeds maximum length of 128 characters (current: ${name8.length})`]
     };
   }
-  if (name7.includes(" ")) {
+  if (name8.includes(" ")) {
     warnings.push("Tool name contains spaces, which may cause parsing issues");
   }
-  if (name7.includes(",")) {
+  if (name8.includes(",")) {
     warnings.push("Tool name contains commas, which may cause parsing issues");
   }
-  if (name7.startsWith("-") || name7.endsWith("-")) {
+  if (name8.startsWith("-") || name8.endsWith("-")) {
     warnings.push("Tool name starts or ends with a dash, which may cause parsing issues in some contexts");
   }
-  if (name7.startsWith(".") || name7.endsWith(".")) {
+  if (name8.startsWith(".") || name8.endsWith(".")) {
     warnings.push("Tool name starts or ends with a dot, which may cause parsing issues in some contexts");
   }
-  if (!TOOL_NAME_REGEX.test(name7)) {
-    const invalidChars = name7.split("").filter((char) => !/[A-Za-z0-9._-]/.test(char)).filter((char, index, arr) => arr.indexOf(char) === index);
+  if (!TOOL_NAME_REGEX.test(name8)) {
+    const invalidChars = name8.split("").filter((char) => !/[A-Za-z0-9._-]/.test(char)).filter((char, index, arr) => arr.indexOf(char) === index);
     warnings.push(`Tool name contains invalid characters: ${invalidChars.map((c) => `"${c}"`).join(", ")}`, "Allowed characters are: A-Z, a-z, 0-9, underscore (_), dash (-), and dot (.)");
     return {
       isValid: false,
@@ -37349,9 +37363,9 @@ function validateToolName(name7) {
     warnings
   };
 }
-function issueToolNameWarning(name7, warnings) {
+function issueToolNameWarning(name8, warnings) {
   if (warnings.length > 0) {
-    console.warn(`Tool name validation warning for "${name7}":`);
+    console.warn(`Tool name validation warning for "${name8}":`);
     for (const warning of warnings) {
       console.warn(`  - ${warning}`);
     }
@@ -37360,9 +37374,9 @@ function issueToolNameWarning(name7, warnings) {
     console.warn("See SEP: Specify Format for Tool Names (https://github.com/modelcontextprotocol/modelcontextprotocol/issues/986) for more details.");
   }
 }
-function validateAndWarnToolName(name7) {
-  const result = validateToolName(name7);
-  issueToolNameWarning(name7, result.warnings);
+function validateAndWarnToolName(name8) {
+  const result = validateToolName(name8);
+  issueToolNameWarning(name8, result.warnings);
   return result.isValid;
 }
 
@@ -37371,13 +37385,13 @@ var ExperimentalMcpServerTasks = class {
   constructor(_mcpServer) {
     this._mcpServer = _mcpServer;
   }
-  registerToolTask(name7, config2, handler) {
+  registerToolTask(name8, config2, handler) {
     const execution = { taskSupport: "required", ...config2.execution };
     if (execution.taskSupport === "forbidden") {
-      throw new Error(`Cannot register task-based tool '${name7}' with taskSupport 'forbidden'. Use registerTool() instead.`);
+      throw new Error(`Cannot register task-based tool '${name8}' with taskSupport 'forbidden'. Use registerTool() instead.`);
     }
     const mcpServerInternal = this._mcpServer;
-    return mcpServerInternal._createRegisteredTool(name7, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
+    return mcpServerInternal._createRegisteredTool(name8, config2.title, config2.description, config2.inputSchema, config2.outputSchema, config2.annotations, execution, config2._meta, handler);
   }
 };
 
@@ -37435,9 +37449,9 @@ var McpServer = class {
       }
     });
     this.server.setRequestHandler(ListToolsRequestSchema, () => ({
-      tools: Object.entries(this._registeredTools).filter(([, tool]) => tool.enabled).map(([name7, tool]) => {
+      tools: Object.entries(this._registeredTools).filter(([, tool]) => tool.enabled).map(([name8, tool]) => {
         const toolDefinition = {
-          name: name7,
+          name: name8,
           title: tool.title,
           description: tool.description,
           inputSchema: (() => {
@@ -37709,8 +37723,8 @@ var McpServer = class {
       return { resources: [...resources, ...templateResources] };
     });
     this.server.setRequestHandler(ListResourceTemplatesRequestSchema, async () => {
-      const resourceTemplates = Object.entries(this._registeredResourceTemplates).map(([name7, template]) => ({
-        name: name7,
+      const resourceTemplates = Object.entries(this._registeredResourceTemplates).map(([name8, template]) => ({
+        name: name8,
         uriTemplate: template.resourceTemplate.uriTemplate.toString(),
         ...template.metadata
       }));
@@ -37747,9 +37761,9 @@ var McpServer = class {
       }
     });
     this.server.setRequestHandler(ListPromptsRequestSchema, () => ({
-      prompts: Object.entries(this._registeredPrompts).filter(([, prompt]) => prompt.enabled).map(([name7, prompt]) => {
+      prompts: Object.entries(this._registeredPrompts).filter(([, prompt]) => prompt.enabled).map(([name8, prompt]) => {
         return {
-          name: name7,
+          name: name8,
           title: prompt.title,
           description: prompt.description,
           arguments: prompt.argsSchema ? promptArgumentsFromSchema(prompt.argsSchema) : void 0
@@ -37782,7 +37796,7 @@ var McpServer = class {
     });
     this._promptHandlersInitialized = true;
   }
-  resource(name7, uriOrTemplate, ...rest) {
+  resource(name8, uriOrTemplate, ...rest) {
     let metadata;
     if (typeof rest[0] === "object") {
       metadata = rest.shift();
@@ -37792,42 +37806,42 @@ var McpServer = class {
       if (this._registeredResources[uriOrTemplate]) {
         throw new Error(`Resource ${uriOrTemplate} is already registered`);
       }
-      const registeredResource = this._createRegisteredResource(name7, void 0, uriOrTemplate, metadata, readCallback);
+      const registeredResource = this._createRegisteredResource(name8, void 0, uriOrTemplate, metadata, readCallback);
       this.setResourceRequestHandlers();
       this.sendResourceListChanged();
       return registeredResource;
     } else {
-      if (this._registeredResourceTemplates[name7]) {
-        throw new Error(`Resource template ${name7} is already registered`);
+      if (this._registeredResourceTemplates[name8]) {
+        throw new Error(`Resource template ${name8} is already registered`);
       }
-      const registeredResourceTemplate = this._createRegisteredResourceTemplate(name7, void 0, uriOrTemplate, metadata, readCallback);
+      const registeredResourceTemplate = this._createRegisteredResourceTemplate(name8, void 0, uriOrTemplate, metadata, readCallback);
       this.setResourceRequestHandlers();
       this.sendResourceListChanged();
       return registeredResourceTemplate;
     }
   }
-  registerResource(name7, uriOrTemplate, config2, readCallback) {
+  registerResource(name8, uriOrTemplate, config2, readCallback) {
     if (typeof uriOrTemplate === "string") {
       if (this._registeredResources[uriOrTemplate]) {
         throw new Error(`Resource ${uriOrTemplate} is already registered`);
       }
-      const registeredResource = this._createRegisteredResource(name7, config2.title, uriOrTemplate, config2, readCallback);
+      const registeredResource = this._createRegisteredResource(name8, config2.title, uriOrTemplate, config2, readCallback);
       this.setResourceRequestHandlers();
       this.sendResourceListChanged();
       return registeredResource;
     } else {
-      if (this._registeredResourceTemplates[name7]) {
-        throw new Error(`Resource template ${name7} is already registered`);
+      if (this._registeredResourceTemplates[name8]) {
+        throw new Error(`Resource template ${name8} is already registered`);
       }
-      const registeredResourceTemplate = this._createRegisteredResourceTemplate(name7, config2.title, uriOrTemplate, config2, readCallback);
+      const registeredResourceTemplate = this._createRegisteredResourceTemplate(name8, config2.title, uriOrTemplate, config2, readCallback);
       this.setResourceRequestHandlers();
       this.sendResourceListChanged();
       return registeredResourceTemplate;
     }
   }
-  _createRegisteredResource(name7, title, uri, metadata, readCallback) {
+  _createRegisteredResource(name8, title, uri, metadata, readCallback) {
     const registeredResource = {
-      name: name7,
+      name: name8,
       title,
       metadata,
       readCallback,
@@ -37857,7 +37871,7 @@ var McpServer = class {
     this._registeredResources[uri] = registeredResource;
     return registeredResource;
   }
-  _createRegisteredResourceTemplate(name7, title, template, metadata, readCallback) {
+  _createRegisteredResourceTemplate(name8, title, template, metadata, readCallback) {
     const registeredResourceTemplate = {
       resourceTemplate: template,
       title,
@@ -37868,8 +37882,8 @@ var McpServer = class {
       enable: () => registeredResourceTemplate.update({ enabled: true }),
       remove: () => registeredResourceTemplate.update({ name: null }),
       update: (updates) => {
-        if (typeof updates.name !== "undefined" && updates.name !== name7) {
-          delete this._registeredResourceTemplates[name7];
+        if (typeof updates.name !== "undefined" && updates.name !== name8) {
+          delete this._registeredResourceTemplates[name8];
           if (updates.name)
             this._registeredResourceTemplates[updates.name] = registeredResourceTemplate;
         }
@@ -37886,7 +37900,7 @@ var McpServer = class {
         this.sendResourceListChanged();
       }
     };
-    this._registeredResourceTemplates[name7] = registeredResourceTemplate;
+    this._registeredResourceTemplates[name8] = registeredResourceTemplate;
     const variableNames = template.uriTemplate.variableNames;
     const hasCompleter = Array.isArray(variableNames) && variableNames.some((v) => !!template.completeCallback(v));
     if (hasCompleter) {
@@ -37894,10 +37908,10 @@ var McpServer = class {
     }
     return registeredResourceTemplate;
   }
-  _createRegisteredPrompt(name7, title, description7, argsSchema, callback) {
+  _createRegisteredPrompt(name8, title, description8, argsSchema, callback) {
     const registeredPrompt = {
       title,
-      description: description7,
+      description: description8,
       argsSchema: argsSchema === void 0 ? void 0 : objectFromShape(argsSchema),
       callback,
       enabled: true,
@@ -37905,8 +37919,8 @@ var McpServer = class {
       enable: () => registeredPrompt.update({ enabled: true }),
       remove: () => registeredPrompt.update({ name: null }),
       update: (updates) => {
-        if (typeof updates.name !== "undefined" && updates.name !== name7) {
-          delete this._registeredPrompts[name7];
+        if (typeof updates.name !== "undefined" && updates.name !== name8) {
+          delete this._registeredPrompts[name8];
           if (updates.name)
             this._registeredPrompts[updates.name] = registeredPrompt;
         }
@@ -37923,7 +37937,7 @@ var McpServer = class {
         this.sendPromptListChanged();
       }
     };
-    this._registeredPrompts[name7] = registeredPrompt;
+    this._registeredPrompts[name8] = registeredPrompt;
     if (argsSchema) {
       const hasCompletable = Object.values(argsSchema).some((field) => {
         const inner = field instanceof ZodOptional ? field._def?.innerType : field;
@@ -37935,13 +37949,13 @@ var McpServer = class {
     }
     return registeredPrompt;
   }
-  _createRegisteredTool(name7, title, description7, inputSchema7, outputSchema7, annotations, execution, _meta, handler) {
-    validateAndWarnToolName(name7);
+  _createRegisteredTool(name8, title, description8, inputSchema8, outputSchema8, annotations, execution, _meta, handler) {
+    validateAndWarnToolName(name8);
     const registeredTool = {
       title,
-      description: description7,
-      inputSchema: getZodSchemaObject(inputSchema7),
-      outputSchema: getZodSchemaObject(outputSchema7),
+      description: description8,
+      inputSchema: getZodSchemaObject(inputSchema8),
+      outputSchema: getZodSchemaObject(outputSchema8),
       annotations,
       execution,
       _meta,
@@ -37951,11 +37965,11 @@ var McpServer = class {
       enable: () => registeredTool.update({ enabled: true }),
       remove: () => registeredTool.update({ name: null }),
       update: (updates) => {
-        if (typeof updates.name !== "undefined" && updates.name !== name7) {
+        if (typeof updates.name !== "undefined" && updates.name !== name8) {
           if (typeof updates.name === "string") {
             validateAndWarnToolName(updates.name);
           }
-          delete this._registeredTools[name7];
+          delete this._registeredTools[name8];
           if (updates.name)
             this._registeredTools[updates.name] = registeredTool;
         }
@@ -37978,7 +37992,7 @@ var McpServer = class {
         this.sendToolListChanged();
       }
     };
-    this._registeredTools[name7] = registeredTool;
+    this._registeredTools[name8] = registeredTool;
     this.setToolRequestHandlers();
     this.sendToolListChanged();
     return registeredTool;
@@ -37986,58 +38000,58 @@ var McpServer = class {
   /**
    * tool() implementation. Parses arguments passed to overrides defined above.
    */
-  tool(name7, ...rest) {
-    if (this._registeredTools[name7]) {
-      throw new Error(`Tool ${name7} is already registered`);
+  tool(name8, ...rest) {
+    if (this._registeredTools[name8]) {
+      throw new Error(`Tool ${name8} is already registered`);
     }
-    let description7;
-    let inputSchema7;
-    let outputSchema7;
+    let description8;
+    let inputSchema8;
+    let outputSchema8;
     let annotations;
     if (typeof rest[0] === "string") {
-      description7 = rest.shift();
+      description8 = rest.shift();
     }
     if (rest.length > 1) {
       const firstArg = rest[0];
       if (isZodRawShapeCompat(firstArg)) {
-        inputSchema7 = rest.shift();
+        inputSchema8 = rest.shift();
         if (rest.length > 1 && typeof rest[0] === "object" && rest[0] !== null && !isZodRawShapeCompat(rest[0])) {
           annotations = rest.shift();
         }
       } else if (typeof firstArg === "object" && firstArg !== null) {
         if (Object.values(firstArg).some((v) => typeof v === "object" && v !== null)) {
-          throw new Error(`Tool ${name7} expected a Zod schema or ToolAnnotations, but received an unrecognized object`);
+          throw new Error(`Tool ${name8} expected a Zod schema or ToolAnnotations, but received an unrecognized object`);
         }
         annotations = rest.shift();
       }
     }
     const callback = rest[0];
-    return this._createRegisteredTool(name7, void 0, description7, inputSchema7, outputSchema7, annotations, { taskSupport: "forbidden" }, void 0, callback);
+    return this._createRegisteredTool(name8, void 0, description8, inputSchema8, outputSchema8, annotations, { taskSupport: "forbidden" }, void 0, callback);
   }
   /**
    * Registers a tool with a config object and callback.
    */
-  registerTool(name7, config2, cb) {
-    if (this._registeredTools[name7]) {
-      throw new Error(`Tool ${name7} is already registered`);
+  registerTool(name8, config2, cb) {
+    if (this._registeredTools[name8]) {
+      throw new Error(`Tool ${name8} is already registered`);
     }
-    const { title, description: description7, inputSchema: inputSchema7, outputSchema: outputSchema7, annotations, _meta } = config2;
-    return this._createRegisteredTool(name7, title, description7, inputSchema7, outputSchema7, annotations, { taskSupport: "forbidden" }, _meta, cb);
+    const { title, description: description8, inputSchema: inputSchema8, outputSchema: outputSchema8, annotations, _meta } = config2;
+    return this._createRegisteredTool(name8, title, description8, inputSchema8, outputSchema8, annotations, { taskSupport: "forbidden" }, _meta, cb);
   }
-  prompt(name7, ...rest) {
-    if (this._registeredPrompts[name7]) {
-      throw new Error(`Prompt ${name7} is already registered`);
+  prompt(name8, ...rest) {
+    if (this._registeredPrompts[name8]) {
+      throw new Error(`Prompt ${name8} is already registered`);
     }
-    let description7;
+    let description8;
     if (typeof rest[0] === "string") {
-      description7 = rest.shift();
+      description8 = rest.shift();
     }
     let argsSchema;
     if (rest.length > 1) {
       argsSchema = rest.shift();
     }
     const cb = rest[0];
-    const registeredPrompt = this._createRegisteredPrompt(name7, void 0, description7, argsSchema, cb);
+    const registeredPrompt = this._createRegisteredPrompt(name8, void 0, description8, argsSchema, cb);
     this.setPromptRequestHandlers();
     this.sendPromptListChanged();
     return registeredPrompt;
@@ -38045,12 +38059,12 @@ var McpServer = class {
   /**
    * Registers a prompt with a config object and callback.
    */
-  registerPrompt(name7, config2, cb) {
-    if (this._registeredPrompts[name7]) {
-      throw new Error(`Prompt ${name7} is already registered`);
+  registerPrompt(name8, config2, cb) {
+    if (this._registeredPrompts[name8]) {
+      throw new Error(`Prompt ${name8} is already registered`);
     }
-    const { title, description: description7, argsSchema } = config2;
-    const registeredPrompt = this._createRegisteredPrompt(name7, title, description7, argsSchema, cb);
+    const { title, description: description8, argsSchema } = config2;
+    const registeredPrompt = this._createRegisteredPrompt(name8, title, description8, argsSchema, cb);
     this.setPromptRequestHandlers();
     this.sendPromptListChanged();
     return registeredPrompt;
@@ -38135,12 +38149,12 @@ function promptArgumentsFromSchema(schema) {
   const shape = getObjectShape(schema);
   if (!shape)
     return [];
-  return Object.entries(shape).map(([name7, field]) => {
-    const description7 = getSchemaDescription(field);
+  return Object.entries(shape).map(([name8, field]) => {
+    const description8 = getSchemaDescription(field);
     const isOptional = isSchemaOptional(field);
     return {
-      name: name7,
-      description: description7,
+      name: name8,
+      description: description8,
       required: !isOptional
     };
   });
@@ -38213,15 +38227,15 @@ function topLevel(answer) {
   const level = Math.round(score);
   return { level, p: Math.min(1, Math.max(0, 1 - Math.abs(score - level))) };
 }
-function gateNoul(noul3, thresholds = DEFAULT_THRESHOLDS) {
-  const certainty = Math.max(noul3, 1 - noul3);
-  const direction = noul3 >= 0.5 ? "yes" : "no";
+function gateNoul(noul4, thresholds = DEFAULT_THRESHOLDS) {
+  const certainty = Math.max(noul4, 1 - noul4);
+  const direction = noul4 >= 0.5 ? "yes" : "no";
   return { gate: gate(certainty, thresholds), certainty, direction, verdict: direction };
 }
-function lean(noul3, auto = DEFAULT_THRESHOLDS.auto) {
-  if (Number.isNaN(noul3)) return "uncertain";
-  if (noul3 >= auto) return "yes";
-  if (noul3 <= 1 - auto) return "no";
+function lean(noul4, auto = DEFAULT_THRESHOLDS.auto) {
+  if (Number.isNaN(noul4)) return "uncertain";
+  if (noul4 >= auto) return "yes";
+  if (noul4 <= 1 - auto) return "no";
   return "uncertain";
 }
 function resolveThresholds(defaults, override) {
@@ -38229,6 +38243,32 @@ function resolveThresholds(defaults, override) {
     auto: override?.auto ?? defaults.auto,
     review: override?.review ?? defaults.review
   };
+}
+
+// src/util/concurrency.ts
+async function mapWithConcurrency(items, limit, fn) {
+  const results = new Array(items.length);
+  const width = Math.max(1, Math.min(Math.floor(limit), items.length));
+  let cursor = 0;
+  const worker = async () => {
+    for (; ; ) {
+      const index = cursor;
+      cursor += 1;
+      if (index >= items.length) return;
+      results[index] = await fn(items[index], index);
+    }
+  };
+  await Promise.all(Array.from({ length: width }, worker));
+  return results;
+}
+function sumUsage(parts) {
+  return parts.reduce(
+    (acc, part) => ({
+      input_tokens: acc.input_tokens + part.input_tokens,
+      output_tokens: acc.output_tokens + part.output_tokens
+    }),
+    { input_tokens: 0, output_tokens: 0 }
+  );
 }
 
 // src/tools/shared.ts
@@ -38303,30 +38343,6 @@ var questionSchema = external_exports.discriminatedUnion("type", [
   scoreQuestionSchema,
   noulQuestionSchema
 ]);
-async function mapWithConcurrency(items, limit, fn) {
-  const results = new Array(items.length);
-  const width = Math.max(1, Math.min(Math.floor(limit), items.length));
-  let cursor = 0;
-  const worker = async () => {
-    for (; ; ) {
-      const index = cursor;
-      cursor += 1;
-      if (index >= items.length) return;
-      results[index] = await fn(items[index], index);
-    }
-  };
-  await Promise.all(Array.from({ length: width }, worker));
-  return results;
-}
-function sumUsage(parts) {
-  return parts.reduce(
-    (acc, part) => ({
-      input_tokens: acc.input_tokens + part.input_tokens,
-      output_tokens: acc.output_tokens + part.output_tokens
-    }),
-    { input_tokens: 0, output_tokens: 0 }
-  );
-}
 
 // src/tools/evaluate.ts
 var name = "jev_evaluate";
@@ -38704,7 +38720,7 @@ function gateActionPolicy(input2) {
   const corroborateUncertain = input2.options?.corroborateUncertain === true;
   const requested = input2.options?.trustRequested === true && !ignoreScope && signals.in_scope >= input2.thresholds.review && signals.destructive < 0.5 && signals.credential_exposure < 0.5;
   const wideBlast = isWide(input2.blast_radius, input2.blast_p_high, auto);
-  const corroborated = corroborateUncertain ? wideBlast || RISK_SIGNALS.some((name7) => signals[name7] >= auto) : wideBlast || RISK_SIGNALS.some((name7) => signals[name7] >= 0.5);
+  const corroborated = corroborateUncertain ? wideBlast || RISK_SIGNALS.some((name8) => signals[name8] >= auto) : wideBlast || RISK_SIGNALS.some((name8) => signals[name8] >= 0.5);
   const leans = {
     destructive: lean(input2.signals.destructive, auto),
     outward_facing: lean(input2.signals.outward_facing, auto),
@@ -38747,7 +38763,7 @@ function gateActionPolicy(input2) {
     requested,
     wide_blast: wideBlast,
     out_of_scope: outOfScope,
-    firm_risk: RISK_SIGNALS.filter((name7) => leans[name7] === "yes"),
+    firm_risk: RISK_SIGNALS.filter((name8) => leans[name8] === "yes"),
     uncertain: uncertainSignals
   };
   if (outOfScope && consequential) {
@@ -39169,25 +39185,167 @@ function noul2(answer) {
   return answer !== void 0 && answer.type === "noul" && typeof answer.noul === "number" ? answer.noul : 0.5;
 }
 
-// src/tools/rank.ts
-var name5 = "jev_rank";
+// src/tools/candidates.ts
+function indexKeyedState(entries) {
+  return entries.map((entry) => entry.text);
+}
+function isChoice(answer) {
+  return answer !== void 0 && answer.type === "choice";
+}
+
+// src/tools/pick.ts
+var name5 = "jev_pick";
 var description5 = [
-  "Rank files or texts by how well each helps answer a query, using Jev's calibrated yes/no judgment (one question per item, batched and parallel).",
-  "Pass `glob` or `paths` for anything you have not already read \u2014 do NOT read files in order to pass their text. The server reads and chunks them itself and returns only `path:start_line-end_line` + score, so a 300-file search costs you almost no context in either direction.",
-  "Pass `candidates` (id + text) only for text you already hold: search hits, retrieved passages, tool results.",
-  "`unit`: `chunk` (default) ranks line ranges, `file` ranks whole files by their best chunk. Prefer `file` for 'where is X' questions: Jev ranks by what a chunk talks about, so a header comment can outrank the code it describes.",
-  "Sensitive files (.env, keys, credentials), binaries, generated output and anything outside the project root are never read; they come back counted in `skipped`.",
-  "`relevance` is P(helps answer the query). Trust the top 1-3, not the order of the tail; a low `any_relevant` means look elsewhere.",
-  "If `score_spread` (top minus median) is below 0.15 the ranking is not informative \u2014 narrow the glob or rephrase the query."
+  "Choose one candidate from a list you already have \u2014 grep hits, symbols, failing test names, file paths \u2014 instead of guessing. One Choice over the candidate ids plus a `none` escape hatch, and one absolute yes/no per candidate.",
+  "Use it after a search has produced the candidates. It cannot invent a value: `pick` is always one of your ids or null.",
+  "`probabilities` are relative (they sum to 1 across candidates and `none`); `fits` is absolute per candidate. Read both: a confident `pick` whose `fits` is under 0.3 is the nearest miss, not a match.",
+  "Up to 240 candidates in one call. Keep each `text` to what identifies it (the matching line plus a little context); for ranking many long passages use `jev_rank`."
 ].join("\n");
 var candidateSchema = external_exports.object({
+  id: external_exports.string().min(1).describe("Your identifier for this candidate. Returned as-is; never shown to the model."),
+  text: external_exports.string().min(1).describe("What identifies this candidate: the matching line plus a little context.")
+});
+var inputShape5 = {
+  question: external_exports.string().min(1).describe("What you are choosing, e.g. 'Which grep hit is the definition of parseConfig?'"),
+  candidates: external_exports.array(candidateSchema).min(2).max(240).describe("The candidates to choose among, 2 to 240. Ids must be unique and none may be 'none'."),
+  none_label: external_exports.string().optional().describe("What it means for no candidate to be the one. Defaults to a generic description."),
+  thresholds: thresholdsSchema
+};
+var inputSchema5 = external_exports.object(inputShape5);
+var outputShape5 = {
+  pick: external_exports.string().nullable().describe("The id of the chosen candidate, or null when `none` won."),
+  confidence: external_exports.number().describe("How peaked the Choice distribution is, 0..1. Gates on this, not on `fits`."),
+  probabilities: external_exports.record(external_exports.string(), external_exports.number()).describe("Relative: P(each candidate is the one) plus `none`, summing to 1 across all of them."),
+  fits: external_exports.record(external_exports.string(), external_exports.number()).describe("Absolute per candidate: P(this is exactly what the question asks for), on its own."),
+  gate: gateSchema.describe("auto/review/escalate on the Choice `confidence`."),
+  ...envelopeShape
+};
+var outputSchema5 = external_exports.object(outputShape5);
+var NONE_KEY = "none";
+var PickInputError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "PickInputError";
+  }
+};
+function pickQuestion(n, noneLabel) {
+  const criteria = {};
+  for (let i = 0; i < n; i += 1) criteria[String(i)] = null;
+  criteria[NONE_KEY] = noneLabel !== void 0 && noneLabel.trim() !== "" ? noneLabel.trim() : "None of the entries in `candidates` is what `question` asks for.";
+  return {
+    type: "choice",
+    instructions: "Which entry of `candidates` is the one `question` asks for? The option names are the zero-based indices into `candidates`.",
+    criteria
+  };
+}
+function fitsQuestion(localIndex) {
+  return {
+    type: "noul",
+    instructions: `Is \`candidates[${localIndex}]\` the specific thing \`question\` asks for, on its own?`,
+    criteria: {
+      true: `\`candidates[${localIndex}]\` is exactly the thing \`question\` asks for.`,
+      false: `\`candidates[${localIndex}]\` is something else, or only related to it.`
+    }
+  };
+}
+function buildRequest(entries, question, noneLabel) {
+  const state = { question, candidates: indexKeyedState(entries) };
+  const questions = { pick: pickQuestion(entries.length, noneLabel) };
+  entries.forEach((_entry, localIndex) => {
+    questions[`fits_${localIndex}`] = fitsQuestion(localIndex);
+  });
+  return { state, questions };
+}
+function noul3(answer) {
+  return answer !== void 0 && answer.type === "noul" && typeof answer.noul === "number" ? answer.noul : 0;
+}
+async function run5(model, input2, config2, signal) {
+  const seen = /* @__PURE__ */ new Set();
+  for (const candidate of input2.candidates) {
+    if (candidate.id === NONE_KEY) {
+      throw new PickInputError(`A candidate id may not be "${NONE_KEY}"; it is the reserved no-match option.`);
+    }
+    if (seen.has(candidate.id)) {
+      throw new PickInputError(`Candidate ids must be unique; "${candidate.id}" appears more than once.`);
+    }
+    seen.add(candidate.id);
+  }
+  const thresholds = resolveThresholds(config2.thresholds, input2.thresholds);
+  const entries = input2.candidates.map((candidate, index) => ({
+    id: candidate.id,
+    text: candidate.text,
+    index
+  }));
+  const { state, questions } = buildRequest(entries, input2.question, input2.none_label);
+  if (!fitsBudget(state, questions, DEFAULT_BUDGET_LIMITS)) {
+    const estimate = estimateBudget(state, questions);
+    throw new BudgetError(
+      `These ${entries.length} candidates plus the question are ~${estimate.total_tokens} estimated tokens, over the ${DEFAULT_BUDGET_LIMITS.total}-token limit. jev_pick is one request and never chunked: shorten the candidate texts or pre-filter in code before picking.`,
+      "total",
+      DEFAULT_BUDGET_LIMITS,
+      estimate
+    );
+  }
+  const request2 = { state, questions };
+  if (signal !== void 0) request2.signal = signal;
+  const result = await model.evaluate(request2);
+  const answers = result.answers;
+  const pickAnswer = answers.pick;
+  const chosen = isChoice(pickAnswer) ? pickAnswer.choice : NONE_KEY;
+  const confidence = isChoice(pickAnswer) && typeof pickAnswer.confidence === "number" ? pickAnswer.confidence : 0;
+  let pick2 = null;
+  if (chosen !== NONE_KEY) {
+    const index = Number(chosen);
+    pick2 = Number.isInteger(index) && index >= 0 && index < entries.length ? entries[index].id : null;
+  }
+  const rawProbabilities = isChoice(pickAnswer) ? pickAnswer.probabilities : {};
+  const probabilities = {};
+  for (const [key, value] of Object.entries(rawProbabilities)) {
+    if (key === NONE_KEY) {
+      probabilities[NONE_KEY] = value;
+      continue;
+    }
+    const index = Number(key);
+    if (Number.isInteger(index) && index >= 0 && index < entries.length) {
+      probabilities[entries[index].id] = value;
+    }
+  }
+  const fits = {};
+  entries.forEach((entry, localIndex) => {
+    fits[entry.id] = noul3(answers[`fits_${localIndex}`]);
+  });
+  const output2 = {
+    pick: pick2,
+    confidence,
+    probabilities,
+    fits,
+    gate: isChoice(pickAnswer) ? gateChoice(pickAnswer, thresholds) : "escalate",
+    model: result.model,
+    usage: result.usage,
+    latency_ms: result.latency_ms
+  };
+  return output2;
+}
+
+// src/tools/rank.ts
+var name6 = "jev_rank";
+var description6 = [
+  "Rank files or texts by how well each helps answer a query: a relative Choice over the batch for order, Jev's calibrated yes/no per item for filtering.",
+  "Pass `glob` or `paths` for anything you have not already read \u2014 do NOT read files to pass their text. The server reads and chunks them and returns only `path:start_line-end_line` + score, so a 300-file search costs almost no context either way.",
+  "Pass `candidates` (id + text) only for text you already hold: search hits, retrieved passages, tool results.",
+  "`unit`: `chunk` (default) ranks line ranges, `file` ranks whole files by their best chunk. Prefer `file` for 'where is X': a header comment can outrank the code it describes.",
+  "Sensitive files (.env, keys, credentials), binaries and generated output are never read; they come back in `skipped`.",
+  "Order comes from a Choice among the strongest candidates: trust the top 1-3 when `choice_margin` >= 0.10, the tail is by `relevance`. `relevance` is P(helps answer the query) and drives `min_relevance`; low `any_relevant` means look elsewhere.",
+  "`score_spread` (top minus median relevance) below 0.15 means the absolute scores are flat; `choice_margin` says whether the top pick was clear."
+].join("\n");
+var candidateSchema2 = external_exports.object({
   id: external_exports.string().min(1).describe("Your identifier for this candidate. Returned as-is; never shown to the model."),
   text: external_exports.string().describe("The candidate text to judge. Keep it to the part that could answer the query.")
 });
 var UNITS = ["chunk", "file"];
-var inputShape5 = {
+var inputShape6 = {
   query: external_exports.string().min(1).describe("What you are trying to find out."),
-  candidates: external_exports.array(candidateSchema).min(1).max(500).optional().describe("Text you already hold, 1 to 500. Use this only when you did not have to read a file to get it."),
+  candidates: external_exports.array(candidateSchema2).min(1).max(500).optional().describe("Text you already hold, 1 to 500. Use this only when you did not have to read a file to get it."),
   paths: external_exports.array(external_exports.string().min(1)).min(1).max(1e3).optional().describe("Files for the server to read, relative to the project root (absolute paths inside it are fine)."),
   glob: external_exports.string().min(1).optional().describe('A glob for the server to expand and read, e.g. "src/**/*.ts". Supports * ** ? [abc] {a,b}.'),
   unit: external_exports.enum(UNITS).optional().describe("For paths/glob: `chunk` (default) ranks line ranges, `file` ranks whole files by their best chunk."),
@@ -39195,7 +39353,7 @@ var inputShape5 = {
   min_relevance: external_exports.number().min(0).max(1).optional().describe("Drop candidates whose relevance is below this. Default 0 (keep everything)."),
   instructions: external_exports.string().optional().describe("Optional extra definition of what counts as relevant here, folded into every question.")
 };
-var inputSchema5 = external_exports.object(inputShape5).refine(
+var inputSchema6 = external_exports.object(inputShape6).refine(
   (value) => [value.candidates, value.paths, value.glob].filter((v) => v !== void 0).length === 1,
   {
     message: "Pass exactly one of `candidates`, `paths` or `glob`. Use `glob`/`paths` for files you have not read (the server reads them), and `candidates` only for text you already hold."
@@ -39209,24 +39367,28 @@ var skippedSchema = external_exports.object({
   not_found: external_exports.number().int(),
   ignored: external_exports.number().int().describe("Lockfiles, `*.min.*`, sourcemaps and ignored directories.")
 }).describe("Why files were not read. Nothing is dropped silently.");
-var outputShape5 = {
+var outputShape6 = {
   ranked: external_exports.array(
     external_exports.object({
       id: external_exports.string().optional().describe("Present for `candidates` sources: your own id, as passed."),
       path: external_exports.string().optional().describe("Present for file sources: path relative to the project root."),
       start_line: external_exports.number().int().optional().describe("1-based, inclusive."),
       end_line: external_exports.number().int().optional().describe("1-based, inclusive."),
-      relevance: external_exports.number().describe("P(this item helps answer the query), 0..1."),
-      rank: external_exports.number().int().describe("1-based position after sorting and filtering.")
+      relevance: external_exports.number().describe("P(this item helps answer the query), 0..1. Absolute; what `min_relevance` filters on."),
+      rank: external_exports.number().int().describe("1-based position after sorting and filtering."),
+      choice: external_exports.number().describe("The Choice probability from the request that placed this row (the final round for the top items, its own batch for the tail).")
     })
-  ).describe("Sorted by relevance descending; ties keep input order. Text is never echoed back."),
+  ).describe("Ordered by the Choice among the strongest candidates, then by relevance for the tail. Text is never echoed back."),
   any_relevant: external_exports.number().describe(
-    "P(at least one candidate helps answer the query), as the MAXIMUM across requests. Low means: look elsewhere. Being a maximum, it is biased upward as the set grows, because a large set is split into more requests and each contributes a sample \u2014 so read a high value as weak evidence and a low value as strong evidence. `score_spread` is the better diagnostic."
+    "P(at least one candidate helps answer the query), judged once over the strongest candidates. Low means: look elsewhere."
+  ),
+  choice_margin: external_exports.number().describe(
+    "Top pick's Choice probability minus the runner-up's, in the request that decided the order, 2 decimals. Below 0.10 the top pick and the runner-up were a toss-up; open both."
   ),
   score_spread: external_exports.number().describe(
     "Top relevance minus median relevance, 2 decimals. How much the ranking actually discriminated. Below 0.15 the scores are effectively flat and the ordering is not informative: narrow the glob or rephrase the query rather than trusting the order."
   ),
-  chunks: external_exports.number().int().describe("How many API requests the item set was split into."),
+  chunks: external_exports.number().int().describe("How many API requests this took: the fan-out over the batches plus the final deciding request."),
   total_candidates: external_exports.number().int().describe("How many items were judged, before top_k/min_relevance."),
   files_scanned: external_exports.number().int().optional().describe("File sources only: files actually read."),
   chunks_scored: external_exports.number().int().optional().describe("File sources only: line-range chunks judged."),
@@ -39234,11 +39396,12 @@ var outputShape5 = {
   est_cost_usd: external_exports.number().optional().describe("File sources only: estimated input-token cost of this call."),
   ...envelopeShape
 };
-var outputSchema5 = external_exports.object(outputShape5);
+var outputSchema6 = external_exports.object(outputShape6);
 var ANY_RELEVANT_ID = "any_relevant";
 var DEFAULT_TOP_K = 10;
 var FILE_CONCURRENCY = 8;
-var MAX_CANDIDATES_PER_REQUEST = 16;
+var MAX_CANDIDATES_PER_REQUEST = 200;
+var FINALISTS_PER_REQUEST = 3;
 function candidateQuestion(localIndex, extra) {
   const suffix = extra === void 0 || extra.trim() === "" ? "" : ` Relevant here means: ${extra.trim()}`;
   return {
@@ -39261,13 +39424,26 @@ function anyRelevantQuestion(extra) {
     }
   };
 }
-function buildRequest(query, entries, extra) {
-  const state = { query, candidates: entries.map((entry) => entry.text) };
+var WHICH_ID = "which";
+function whichQuestion(n, extra) {
+  const suffix = extra === void 0 || extra.trim() === "" ? "" : ` Relevant here means: ${extra.trim()}`;
+  const criteria = {};
+  for (let i = 0; i < n; i += 1) criteria[String(i)] = null;
+  criteria.none = "No entry in `candidates` contains information that helps answer `query`.";
+  return {
+    type: "choice",
+    instructions: `Which entry of \`candidates\` best helps answer \`query\`? The option names are the zero-based indices into \`candidates\`. Choose \`none\` only if no entry helps at all.${suffix}`,
+    criteria
+  };
+}
+function buildRequest2(query, entries, extra, opts) {
+  const state = { query, candidates: indexKeyedState(entries) };
   const questions = {};
   entries.forEach((_entry, localIndex) => {
     questions[`cand_${localIndex}`] = candidateQuestion(localIndex, extra);
   });
-  questions[ANY_RELEVANT_ID] = anyRelevantQuestion(extra);
+  questions[WHICH_ID] = whichQuestion(entries.length, extra);
+  if (opts.anyRelevant) questions[ANY_RELEVANT_ID] = anyRelevantQuestion(extra);
   return { state, questions };
 }
 function chunkCandidates(query, entries, extra, limits = DEFAULT_BUDGET_LIMITS, maxPerRequest = MAX_CANDIDATES_PER_REQUEST) {
@@ -39278,7 +39454,7 @@ function chunkCandidates(query, entries, extra, limits = DEFAULT_BUDGET_LIMITS, 
       chunks.push(current);
       current = [];
     }
-    const solo = buildRequest(query, [entry], extra);
+    const solo = buildRequest2(query, [entry], extra, { anyRelevant: true });
     if (!fitsBudget(solo.state, solo.questions, limits)) {
       const estimate = estimateBudget(solo.state, solo.questions);
       throw new BudgetError(
@@ -39289,7 +39465,7 @@ function chunkCandidates(query, entries, extra, limits = DEFAULT_BUDGET_LIMITS, 
       );
     }
     const attempt = [...current, entry];
-    const request2 = buildRequest(query, attempt, extra);
+    const request2 = buildRequest2(query, attempt, extra, { anyRelevant: true });
     if (fitsBudget(request2.state, request2.questions, limits)) {
       current = attempt;
     } else {
@@ -39348,47 +39524,116 @@ function scoreSpread(relevances) {
   const median = sorted[Math.floor(sorted.length / 2)];
   return Math.round((sorted[0] - median) * 100) / 100;
 }
-function foldToFiles(scored) {
-  const best = /* @__PURE__ */ new Map();
-  for (const item of scored) {
-    const path = item.entry.where?.path;
-    if (path === void 0) continue;
-    const current = best.get(path);
-    if (current === void 0 || item.relevance > current.relevance) best.set(path, item);
-  }
-  return [...best.values()];
+function choiceMargin(probabilities) {
+  const values = Object.entries(probabilities).filter(([key]) => key !== "none").map(([, value]) => value).sort((a, b) => b - a);
+  if (values.length === 0) return 0;
+  const top = values[0];
+  const runner = values[1] ?? 0;
+  return Math.round((top - runner) * 100) / 100;
 }
-async function run5(model, input2, config2, signal) {
+function pickFinalists(perRequest, query, extra, limits = DEFAULT_BUDGET_LIMITS) {
+  const pool = [];
+  for (const request2 of perRequest) {
+    const top = [...request2.scores].sort((a, b) => b.choice - a.choice).slice(0, FINALISTS_PER_REQUEST);
+    pool.push(...top);
+  }
+  pool.sort((a, b) => b.relevance - a.relevance || a.entry.index - b.entry.index);
+  let finalists = pool.map((item) => item.entry);
+  while (finalists.length > 1) {
+    const request2 = buildRequest2(query, finalists, extra, { anyRelevant: true });
+    if (fitsBudget(request2.state, request2.questions, limits)) break;
+    finalists = finalists.slice(0, -1);
+  }
+  return finalists;
+}
+function orderRows(all, finalists, finalChoice) {
+  const finalistRows = all.filter((row) => finalists.has(row.entry)).map((row) => ({ ...row, choice: finalChoice.get(row.entry) ?? row.choice })).sort((a, b) => b.choice - a.choice || b.relevance - a.relevance || a.entry.index - b.entry.index);
+  const tailRows = all.filter((row) => !finalists.has(row.entry)).sort((a, b) => b.relevance - a.relevance || a.entry.index - b.entry.index);
+  return [...finalistRows, ...tailRows];
+}
+function foldToFilesByRank(ordered) {
+  const seen = /* @__PURE__ */ new Set();
+  const out = [];
+  for (const row of ordered) {
+    const path = row.entry.where?.path;
+    if (path === void 0) {
+      out.push(row);
+      continue;
+    }
+    if (seen.has(path)) continue;
+    seen.add(path);
+    out.push(row);
+  }
+  return out;
+}
+function noulOf(answer) {
+  return answer !== void 0 && answer.type === "noul" && typeof answer.noul === "number" ? answer.noul : 0;
+}
+async function run6(model, input2, config2, signal) {
   const fileOptions = config2.files ?? {};
   const source = buildSource(input2, fileOptions);
   const entries = source.entries;
   const chunks = chunkCandidates(input2.query, entries, input2.instructions);
   const concurrency = source.fromFiles && config2.maxConcurrencyExplicit !== true ? Math.max(config2.maxConcurrency, FILE_CONCURRENCY) : config2.maxConcurrency;
   const started = Date.now();
-  const results = await mapWithConcurrency(chunks, concurrency, async (chunk) => {
-    const { state, questions } = buildRequest(input2.query, chunk, input2.instructions);
+  const single = chunks.length === 1;
+  const perRequest = await mapWithConcurrency(chunks, concurrency, async (chunk) => {
+    const { state, questions } = buildRequest2(input2.query, chunk, input2.instructions, { anyRelevant: single });
     const request2 = { state, questions };
     if (signal !== void 0) request2.signal = signal;
     const result = await model.evaluate(request2);
-    return { chunk, result };
-  });
-  const scored = [];
-  let anyRelevant = 0;
-  for (const { chunk, result } of results) {
     const answers = result.answers;
-    chunk.forEach((entry, localIndex) => {
-      const answer = answers[`cand_${localIndex}`];
-      scored.push({ entry, relevance: answer?.noul ?? 0 });
-    });
-    const any2 = answers[ANY_RELEVANT_ID]?.noul;
-    if (typeof any2 === "number" && any2 > anyRelevant) anyRelevant = any2;
+    const whichAnswer = answers[WHICH_ID];
+    const which = isChoice(whichAnswer) ? whichAnswer.probabilities : {};
+    const scores = chunk.map((entry, localIndex) => ({
+      entry,
+      relevance: noulOf(answers[`cand_${localIndex}`]),
+      choice: which[String(localIndex)] ?? 0
+    }));
+    const anyRelevant2 = single ? noulOf(answers[ANY_RELEVANT_ID]) : void 0;
+    return { scores, which, anyRelevant: anyRelevant2, result };
+  });
+  const flat = perRequest.flatMap((request2) => request2.scores);
+  const usageParts = perRequest.map((request2) => request2.result.usage);
+  const answeringModel = perRequest[0]?.result.model ?? model.name;
+  let finalists;
+  let finalChoice;
+  let anyRelevant;
+  let choiceMarginValue;
+  let requestCount = chunks.length;
+  if (single) {
+    const only = perRequest[0];
+    finalists = new Set((only?.scores ?? []).map((score) => score.entry));
+    finalChoice = new Map((only?.scores ?? []).map((score) => [score.entry, score.choice]));
+    anyRelevant = only?.anyRelevant ?? 0;
+    choiceMarginValue = choiceMargin(only?.which ?? {});
+  } else {
+    const chosen = pickFinalists(perRequest, input2.query, input2.instructions);
+    const { state, questions } = buildRequest2(input2.query, chosen, input2.instructions, { anyRelevant: true });
+    const finalRequest = { state, questions };
+    if (signal !== void 0) finalRequest.signal = signal;
+    const finalResult = await model.evaluate(finalRequest);
+    requestCount += 1;
+    usageParts.push(finalResult.usage);
+    const finalAnswers = finalResult.answers;
+    const finalWhichAnswer = finalAnswers[WHICH_ID];
+    const finalWhich = isChoice(finalWhichAnswer) ? finalWhichAnswer.probabilities : {};
+    finalists = new Set(chosen);
+    finalChoice = new Map(chosen.map((entry, localIndex) => [entry, finalWhich[String(localIndex)] ?? 0]));
+    anyRelevant = noulOf(finalAnswers[ANY_RELEVANT_ID]);
+    choiceMarginValue = choiceMargin(finalWhich);
   }
   const unit = input2.unit ?? "chunk";
-  const rows = source.fromFiles && unit === "file" ? foldToFiles(scored) : scored;
+  const ordered = orderRows(flat, finalists, finalChoice);
+  const rows = source.fromFiles && unit === "file" ? foldToFilesByRank(ordered) : ordered;
   const minRelevance = input2.min_relevance ?? 0;
   const topK = input2.top_k ?? DEFAULT_TOP_K;
-  const ranked = rows.filter((item) => item.relevance >= minRelevance).sort((a, b) => b.relevance - a.relevance || a.entry.index - b.entry.index).slice(0, topK).map((item, position) => {
-    const row = { relevance: item.relevance, rank: position + 1 };
+  const ranked = rows.filter((item) => item.relevance >= minRelevance).slice(0, topK).map((item, position) => {
+    const row = {
+      relevance: item.relevance,
+      rank: position + 1,
+      choice: Math.round(item.choice * 100) / 100
+    };
     if (item.entry.where === void 0) {
       row.id = item.entry.id;
     } else {
@@ -39401,13 +39646,14 @@ async function run5(model, input2, config2, signal) {
   const output2 = {
     ranked,
     any_relevant: anyRelevant,
+    choice_margin: choiceMarginValue,
     // Over everything judged, not just the rows that survived top_k: the
-    // question it answers is whether the model discriminated at all.
+    // question it answers is whether the absolute scores discriminated at all.
     score_spread: scoreSpread(rows.map((row) => row.relevance)),
-    chunks: chunks.length,
+    chunks: requestCount,
     total_candidates: rows.length,
-    model: results[0]?.result.model ?? model.name,
-    usage: sumUsage(results.map(({ result }) => result.usage)),
+    model: answeringModel,
+    usage: sumUsage(usageParts),
     latency_ms: Date.now() - started
   };
   if (source.files !== void 0) {
@@ -39419,59 +39665,9 @@ async function run5(model, input2, config2, signal) {
   return output2;
 }
 
-// src/tools/verify.ts
-var name6 = "jev_verify";
-var description6 = [
-  "Check up to 100 claims against one body of evidence: supported / contradicted / not_addressed per claim, with a calibrated confidence.",
-  "Pass `evidence_path` for anything you have not already read \u2014 do NOT read a file in order to pass its text. The server reads it, chunks it if it is large, checks every claim against every chunk and returns line ranges. Use `evidence` only for text you already hold.",
-  "Use it before you assert something to the user or write it into a file: hold your draft's claims to the source, or check a summary against the document it summarises.",
-  "The rubric is strictly literal and closed-world: supported only if the evidence states or entails it. A claim that is true in the world but absent from the evidence comes back `not_addressed` \u2014 which is the answer you want when hunting unsupported assertions. `conflicting` means one part of the evidence firmly supports it and another firmly contradicts it.",
-  "Claims should be single, self-contained statements \u2014 split compound sentences and resolve pronouns first.",
-  "`all_supported` is true only when every claim is supported AND the model was confident about each; treat `review`/`escalate` gates as claims a human should look at."
-].join("\n");
-var inputShape6 = {
-  claims: external_exports.array(external_exports.string().min(1)).min(1).max(100).describe("Self-contained statements to check, one per entry. Split compound claims."),
-  evidence: external_exports.string().min(1).optional().describe("Text you already hold. The only material the claims are judged against."),
-  evidence_path: external_exports.string().min(1).optional().describe("A file for the server to read, relative to the project root. Preferred over pasting file text."),
-  start_line: external_exports.number().int().min(1).optional().describe("With `evidence_path`: first line to use, 1-based inclusive. Default 1."),
-  end_line: external_exports.number().int().min(1).optional().describe("With `evidence_path`: last line to use, 1-based inclusive. Default end of file."),
-  thresholds: thresholdsSchema
-};
-var inputSchema6 = external_exports.object(inputShape6).refine(
-  (value) => [value.evidence, value.evidence_path].filter((v) => v !== void 0).length === 1,
-  {
-    message: "Pass exactly one of `evidence` or `evidence_path`. Use `evidence_path` for a file you have not read (the server reads it); `evidence` only for text you already hold."
-  }
-);
+// src/tools/verify-core.ts
 var VERDICTS = ["supported", "contradicted", "not_addressed"];
 var MERGED_VERDICTS = [...VERDICTS, "conflicting"];
-var verdictSchema = external_exports.enum(MERGED_VERDICTS);
-var outputShape6 = {
-  claims: external_exports.array(
-    external_exports.object({
-      claim: external_exports.string(),
-      verdict: verdictSchema,
-      probabilities: external_exports.record(external_exports.string(), external_exports.number()),
-      confidence: external_exports.number(),
-      gate: gateSchema,
-      where: external_exports.object({ start_line: external_exports.number().int(), end_line: external_exports.number().int() }).optional().describe("Which lines of the evidence settled it. Present when the evidence came from a file or was chunked.")
-    })
-  ).describe("One result per input claim, in input order."),
-  summary: external_exports.object({
-    supported: external_exports.number().int(),
-    contradicted: external_exports.number().int(),
-    not_addressed: external_exports.number().int(),
-    conflicting: external_exports.number().int().describe("Firmly supported by one part of the evidence and contradicted by another."),
-    needs_review: external_exports.number().int().describe("Claims whose gate is not `auto`.")
-  }).describe("Counts across all claims."),
-  all_supported: external_exports.boolean().describe("True only if every claim is `supported` and every gate is `auto`."),
-  thresholds: external_exports.object({ auto: external_exports.number(), review: external_exports.number() }),
-  evidence_chunks: external_exports.number().int().describe("How many requests the evidence was split into. 1 unless it was large."),
-  evidence_path: external_exports.string().optional().describe("Present when the evidence was read from a file; relative to the root."),
-  est_cost_usd: external_exports.number().optional().describe("Present for file evidence: estimated input-token cost of this call."),
-  ...envelopeShape
-};
-var outputSchema6 = external_exports.object(outputShape6);
 var CRITERIA2 = {
   supported: "`evidence` explicitly states the claim, or states something that directly entails it. Outside knowledge does not count, no matter how obviously true the claim is.",
   contradicted: "`evidence` explicitly states something that cannot be true at the same time as the claim.",
@@ -39490,7 +39686,16 @@ function questionId(index) {
 function allSupported(results) {
   return results.length > 0 && results.every((r) => r.verdict === "supported" && r.gate === "auto");
 }
+function normalizeVerdict(choice) {
+  return VERDICTS.includes(choice) ? choice : "not_addressed";
+}
 var PIECE_OVERLAP_LINES = 5;
+var EvidenceTooLongError = class extends Error {
+  constructor(message) {
+    super(message);
+    this.name = "EvidenceTooLongError";
+  }
+};
 function packEvidence(text, claims, firstLine = 1, limits = DEFAULT_BUDGET_LIMITS) {
   const questions = {};
   claims.forEach((_claim, index) => {
@@ -39514,8 +39719,7 @@ function packEvidence(text, claims, firstLine = 1, limits = DEFAULT_BUDGET_LIMIT
       end += 1;
     }
     if (end === start) {
-      throw new FileSelectionError(
-        "cost_ceiling",
+      throw new EvidenceTooLongError(
         `Line ${firstLine + start} of the evidence is too long to verify on its own against ${claims.length} claim${claims.length === 1 ? "" : "s"}. Pass fewer claims, or narrow the evidence with \`start_line\`/\`end_line\`.`
       );
     }
@@ -39559,6 +39763,58 @@ function mergeClaim(claim2, answers, thresholds, reportWhere) {
   if (reportWhere) result.where = { start_line: best.piece.start_line, end_line: best.piece.end_line };
   return result;
 }
+
+// src/tools/verify.ts
+var name7 = "jev_verify";
+var description7 = [
+  "Check up to 100 claims against one body of evidence: supported / contradicted / not_addressed per claim, with a calibrated confidence.",
+  "Pass `evidence_path` for anything you have not already read \u2014 do NOT read a file in order to pass its text. The server reads it, chunks it if it is large, checks every claim against every chunk and returns line ranges. Use `evidence` only for text you already hold.",
+  "Use it before you assert something to the user or write it into a file: hold your draft's claims to the source, or check a summary against the document it summarises.",
+  "The rubric is strictly literal and closed-world: supported only if the evidence states or entails it. A claim that is true in the world but absent from the evidence comes back `not_addressed` \u2014 which is the answer you want when hunting unsupported assertions. `conflicting` means one part of the evidence firmly supports it and another firmly contradicts it.",
+  "Claims should be single, self-contained statements \u2014 split compound sentences and resolve pronouns first.",
+  "`all_supported` is true only when every claim is supported AND the model was confident about each; treat `review`/`escalate` gates as claims a human should look at."
+].join("\n");
+var inputShape7 = {
+  claims: external_exports.array(external_exports.string().min(1)).min(1).max(100).describe("Self-contained statements to check, one per entry. Split compound claims."),
+  evidence: external_exports.string().min(1).optional().describe("Text you already hold. The only material the claims are judged against."),
+  evidence_path: external_exports.string().min(1).optional().describe("A file for the server to read, relative to the project root. Preferred over pasting file text."),
+  start_line: external_exports.number().int().min(1).optional().describe("With `evidence_path`: first line to use, 1-based inclusive. Default 1."),
+  end_line: external_exports.number().int().min(1).optional().describe("With `evidence_path`: last line to use, 1-based inclusive. Default end of file."),
+  thresholds: thresholdsSchema
+};
+var inputSchema7 = external_exports.object(inputShape7).refine(
+  (value) => [value.evidence, value.evidence_path].filter((v) => v !== void 0).length === 1,
+  {
+    message: "Pass exactly one of `evidence` or `evidence_path`. Use `evidence_path` for a file you have not read (the server reads it); `evidence` only for text you already hold."
+  }
+);
+var verdictSchema = external_exports.enum(MERGED_VERDICTS);
+var outputShape7 = {
+  claims: external_exports.array(
+    external_exports.object({
+      claim: external_exports.string(),
+      verdict: verdictSchema,
+      probabilities: external_exports.record(external_exports.string(), external_exports.number()),
+      confidence: external_exports.number(),
+      gate: gateSchema,
+      where: external_exports.object({ start_line: external_exports.number().int(), end_line: external_exports.number().int() }).optional().describe("Which lines of the evidence settled it. Present when the evidence came from a file or was chunked.")
+    })
+  ).describe("One result per input claim, in input order."),
+  summary: external_exports.object({
+    supported: external_exports.number().int(),
+    contradicted: external_exports.number().int(),
+    not_addressed: external_exports.number().int(),
+    conflicting: external_exports.number().int().describe("Firmly supported by one part of the evidence and contradicted by another."),
+    needs_review: external_exports.number().int().describe("Claims whose gate is not `auto`.")
+  }).describe("Counts across all claims."),
+  all_supported: external_exports.boolean().describe("True only if every claim is `supported` and every gate is `auto`."),
+  thresholds: external_exports.object({ auto: external_exports.number(), review: external_exports.number() }),
+  evidence_chunks: external_exports.number().int().describe("How many requests the evidence was split into. 1 unless it was large."),
+  evidence_path: external_exports.string().optional().describe("Present when the evidence was read from a file; relative to the root."),
+  est_cost_usd: external_exports.number().optional().describe("Present for file evidence: estimated input-token cost of this call."),
+  ...envelopeShape
+};
+var outputSchema7 = external_exports.object(outputShape7);
 function validateSource2(input2) {
   const named = ["evidence", "evidence_path"].filter((key) => input2[key] !== void 0);
   if (named.length !== 1) {
@@ -39624,13 +39880,19 @@ function readEvidenceFile(input2, options) {
   }
   return { text, firstLine: first, path: resolution.relative };
 }
-async function run6(model, input2, config2, signal) {
+async function run7(model, input2, config2, signal) {
   validateSource2(input2);
   const thresholds = resolveThresholds(config2.thresholds, input2.thresholds);
   const fileOptions = config2.files ?? {};
   const fromFile = input2.evidence_path !== void 0;
   const source = fromFile ? readEvidenceFile(input2, fileOptions) : { text: input2.evidence, firstLine: 1, path: void 0 };
-  const pieces = packEvidence(source.text, input2.claims, source.firstLine);
+  let pieces;
+  try {
+    pieces = packEvidence(source.text, input2.claims, source.firstLine);
+  } catch (error62) {
+    if (error62 instanceof EvidenceTooLongError) throw new FileSelectionError("cost_ceiling", error62.message);
+    throw error62;
+  }
   const estimated = pieces.reduce(
     (sum, piece) => sum + estimateTokens(piece.text) + estimateTokens(input2.claims) + 60 * input2.claims.length,
     0
@@ -39689,13 +39951,10 @@ async function run6(model, input2, config2, signal) {
   }
   return output2;
 }
-function normalizeVerdict(choice) {
-  return VERDICTS.includes(choice) ? choice : "not_addressed";
-}
 
 // src/server.ts
 var SERVER_NAME = "jevwire";
-var SERVER_VERSION = "0.5.2";
+var SERVER_VERSION = "0.6.0";
 var ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
 function ok(output2) {
   return {
@@ -39721,11 +39980,11 @@ function createServer(model, config2) {
     files: { root: config2.projectRoot }
   };
   const redact = (message) => config2.apiKey === null || config2.apiKey.length < 8 ? message : message.split(config2.apiKey).join("[redacted]");
-  function wrap(run7) {
+  function wrap(run8) {
     return async (input2, extra) => {
       if (model === null) return fail(MISSING_API_KEY_MESSAGE);
       try {
-        return ok(await run7(model, input2, toolConfig, extra.signal));
+        return ok(await run8(model, input2, toolConfig, extra.signal));
       } catch (error62) {
         return fail(redact(describeError(error62)));
       }
@@ -39742,6 +40001,16 @@ function createServer(model, config2) {
     wrap(run)
   );
   server.registerTool(
+    name6,
+    {
+      description: description6,
+      inputSchema: inputShape6,
+      outputSchema: outputShape6,
+      annotations: ANNOTATIONS
+    },
+    wrap(run6)
+  );
+  server.registerTool(
     name5,
     {
       description: description5,
@@ -39752,14 +40021,14 @@ function createServer(model, config2) {
     wrap(run5)
   );
   server.registerTool(
-    name6,
+    name7,
     {
-      description: description6,
-      inputSchema: inputShape6,
-      outputSchema: outputShape6,
+      description: description7,
+      inputSchema: inputShape7,
+      outputSchema: outputShape7,
       annotations: ANNOTATIONS
     },
-    wrap(run6)
+    wrap(run7)
   );
   server.registerTool(
     name2,

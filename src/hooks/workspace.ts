@@ -122,6 +122,14 @@ function gitEnv(): NodeJS.ProcessEnv {
 }
 
 async function git(cwd: string, args: readonly string[], limits: WorkspaceLimits): Promise<string | undefined> {
+  // A non-existent cwd does not fail the spawn fast — Node can take seconds
+  // before erroring, and the `timeout` option does not cover that window. The
+  // check makes a bad cwd (a subagent's, a fuzzed one) return at once.
+  try {
+    if (!statSync(cwd).isDirectory()) return undefined;
+  } catch {
+    return undefined;
+  }
   try {
     const { stdout } = await run("git", args as string[], {
       cwd,

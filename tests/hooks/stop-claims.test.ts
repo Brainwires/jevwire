@@ -12,7 +12,9 @@ let repo: string;
 
 beforeEach(() => {
   repo = mkdtempSync(join(tmpdir(), "jev-stopclaims-"));
-  const g = (...args: string[]): void => execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+  const g = (...args: string[]): void => {
+    execFileSync("git", args, { cwd: repo, stdio: "ignore" });
+  };
   g("init", "-q");
   g("config", "user.email", "t@example.com");
   g("config", "user.name", "t");

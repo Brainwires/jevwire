@@ -50,8 +50,9 @@ describe("plugin/dist", () => {
   });
 
   it("uses only the node builtins the daemon is allowed to reach for", () => {
-    // `node:http`, `node:net`, `node:crypto` and `node:child_process` are the
-    // four 0.4.0 added. Anything else new here is worth a second look, because
+    // `node:http`, `node:net`, `node:crypto` and `node:child_process` came with
+    // the 0.4.0 daemon; `node:util` came with 0.6.0's `workspace.ts` (promisified
+    // `execFile` for git). Anything else new here is worth a second look, because
     // the reason this bundle has no dependencies is that it runs on every call.
     const text = readFileSync(hook, "utf8");
     const imported = new Set([...text.matchAll(/from\s+"(node:[a-z_/]+)"/g)].map((match) => match[1] as string));
@@ -64,6 +65,7 @@ describe("plugin/dist", () => {
         "node:net",
         "node:os",
         "node:path",
+        "node:util",
       ].sort(),
     );
   });

@@ -11,7 +11,7 @@ rate-on-a-rubric — and it answers every one in parallel with a probability ove
 
 It is three things:
 
-- **6 MCP tools** — `jev_rank`, `jev_verify`, `jev_evaluate`, `jev_gate_action`, `jev_next_step`,
+- **7 MCP tools** — `jev_rank`, `jev_pick`, `jev_verify`, `jev_evaluate`, `jev_gate_action`, `jev_next_step`,
   `jev_list_models`.
 - **An embeddable library** — `JevDecisionModel` plus a pure `run*` function per tool, so mandatory
   checks can live in your harness instead of in a tool an agent may decline to call.
@@ -301,6 +301,7 @@ environment fallback for hand-wired use.
 | `gate` | `off` \| `advisory` \| `strict` | `advisory` | `advisory` judges writes outside the project, sensitive paths, unrecognized shell commands and MCP tools with unknown effects, notes what it finds, and trips the two block-grade cases; `strict` also judges ordinary in-project edits and notes the cases advisory mode keeps to itself. Replaces `gate_mode` (see below) | `JEV_GATE` |
 | `ask_on_trip` | boolean | `false` | Turn a tripwire's `deny` into a permission prompt, so you decide instead of Claude. The only setting in the plugin that can prompt you. No effect in `dontAsk`/`bypassPermissions` | `JEV_ASK_ON_TRIP` |
 | `stop_check` | boolean | `true` | The `Stop` check on the final message | `JEV_STOP_CHECK` |
+| `verify_claims` | boolean | `true` | The model half of the `Stop` claim check (reads `git diff HEAD`). The deterministic file/identifier checks always run under `stop_check` | `JEV_VERIFY_CLAIMS` |
 | `screen_results` | boolean | `true` | The `PostToolUse` injection screen | `JEV_SCREEN_RESULTS` |
 | `route_prompts` | boolean | `false` | One advisory line naming the kind of task a prompt asks for. Off by default: it costs a call on every prompt | `JEV_ROUTE_PROMPTS` |
 | `auto_threshold` | number, 0.5–0.99 | `0.85` | Probability at or above which a signal counts as established. Applies to a Noul's `P(yes)` and to a Score level set's mass, which are the same kind of quantity. Lower means more notes | `JEV_AUTO_THRESHOLD` |
@@ -445,10 +446,14 @@ third. That is what "trust the top 1-3, not the order of the tail" means in prac
 is a separate judgment on the whole set — low means look elsewhere rather than reading the top hit
 anyway.
 
-**Read `score_spread` before you read the order.** It is the top relevance minus the median, and it
-is the only honest signal of whether the ranking discriminated. Below 0.15 the scores are flat and
-the ordering is noise, whatever the top number looks like: narrow the glob or rephrase the query.
-Above it, trust the top one to three rows and treat the tail as unsorted.
+**The order comes from a Choice, not the per-item score.** Since 0.6.0 each batch answers a `which`
+Choice ("which entry best helps"), and the batch winners are reconciled by one final Choice — a
+relative "which of these" instead of an absolute yes/no battery that went flat past ~50 candidates.
+`relevance` is still the absolute yes/no that `min_relevance` filters on; `choice` (per row) and
+`choice_margin` (top minus runner-up in the deciding request) report how clear the pick was — below
+0.10 the top two were a toss-up, so open both. `score_spread` (top relevance minus median) still says
+whether the absolute scores discriminated at all; below 0.15 they are flat. Trust the top one to
+three rows and treat the tail as unsorted.
 
 Sensitive files (`.env`, keys, credentials), binaries, files over 512 KB, generated output
 (`node_modules`, `.git`, `dist`, `build`, `.next`, `target`, `vendor`, lockfiles, `*.min.*`) and
@@ -459,6 +464,28 @@ is sent.
 
 For `candidates` sources, ids never reach the model: candidates go in as an index-keyed array and
 the indices are mapped back in code. Keep your own id → text map.
+
+### `jev_pick` — choose one candidate you already have
+
+When a search has produced a short list — grep hits, symbols, failing test names, paths — and you
+need exactly one of them, `jev_pick` chooses it instead of guessing. It asks one Choice over the
+candidate indices plus a `none` escape hatch, and one absolute `fits` yes/no per candidate:
+
+```json
+{
+  "question": "Which grep hit is the definition of parseConfig?",
+  "candidates": [
+    { "id": "src/config.ts:12", "text": "export function parseConfig(raw: string) {" },
+    { "id": "src/config.ts:88", "text": "  const cfg = parseConfig(read());" }
+  ]
+}
+```
+
+`pick` is always one of your ids or `null` — it cannot invent a value. `probabilities` are relative
+(they sum to 1 across the candidates and `none`); `fits` is absolute per candidate. Read both: a
+confident `pick` whose `fits` is under 0.3 is the nearest miss, not a match. Up to 240 candidates in
+one request; it is never chunked, so an over-budget set errors with the estimate and no call is sent.
+For ordering many, possibly long, passages use `jev_rank`.
 
 ### `jev_verify` — hold claims to a file
 

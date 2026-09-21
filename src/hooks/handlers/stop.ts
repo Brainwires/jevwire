@@ -339,9 +339,12 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
 
     let claimsPolicy: StopClaimsResult | undefined;
     let claimsTimedOut = false;
-    if (cwd !== undefined) {
+    const extracted = cwd === undefined ? undefined : extractClaims(message);
+    // Only touch the workspace when the message actually names a file or an
+    // identifier: a message with nothing to check has nothing to verify, and
+    // skipping the git reads keeps the common case free.
+    if (cwd !== undefined && extracted !== undefined && (extracted.files.length > 0 || extracted.idents.length > 0)) {
       try {
-        const extracted = extractClaims(message);
         const [nameStatus, headDiff] = await Promise.all([gitNameStatus(cwd), gitDiffHead(cwd)]);
         const stage1 = checkReferences(extracted, {
           fileExists: (rel) => projectFileExists(cwd, rel),

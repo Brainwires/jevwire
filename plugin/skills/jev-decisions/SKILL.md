@@ -20,8 +20,14 @@ It is a System One model: quick, literal judgment. It is not a reasoner.
 |---|---|
 | Finding which files in a tree are worth opening | `jev_rank` with `glob` |
 | More than ~15 candidates you already hold, to rank against one query | `jev_rank` with `candidates` |
+| A search produced candidates (grep hits, symbols, test names, paths) and you need exactly one | `jev_pick` |
 | About to report claims that rest on a file or page | `jev_verify` with `evidence_path` |
 | A tool failed in a way you do not understand and you are about to retry | `jev_next_step` |
+
+`jev_rank` orders by a relative Choice among the batch; trust the top one to three rows when
+`choice_margin` >= 0.10, and read the tail as unsorted. `jev_pick` is the one-answer version:
+`pick` is always one of your ids or `null`, and a confident pick whose `fits` is under 0.3 is the
+nearest miss, not a match.
 | Several small yes/no or bounded-choice judgments over the same text | `jev_evaluate` |
 | About to do something you cannot cheaply undo, and you want a second opinion | `jev_gate_action` |
 | Which model versions exist | `jev_list_models` |
@@ -178,6 +184,12 @@ line starting with `[jev]`, that is this plugin's classifier, not the user:
   last test, build, type-check or lint command exited zero, and it is telling you
   that your own claim contradicts that record. Re-run the command, or correct the
   claim.
+- **`[jev] Your final message names N things the workspace does not show: …`** —
+  the file and identifier checks behind this ran in code, against the project and
+  `git diff HEAD`: a file you named is not there, or an identifier you named is in
+  neither the file nor the diff. Correct the message, or make the change you
+  described. (A contradiction found by the classifier reading the diff is called
+  out separately, and the line says which is which.)
 
 Every one of these is an **advisory signal from a fast classifier**. Weigh it; do
 not obey it blindly. It has seen less than you have: the gate sees one tool call,

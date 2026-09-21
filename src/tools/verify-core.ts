@@ -20,7 +20,7 @@ import type {
   Json,
   Question,
 } from "../decision/types.js";
-import { mapWithConcurrency, sumUsage } from "./shared.js";
+import { mapWithConcurrency, sumUsage } from "../util/concurrency.js";
 
 export const VERDICTS = ["supported", "contradicted", "not_addressed"] as const;
 export type Verdict = (typeof VERDICTS)[number];

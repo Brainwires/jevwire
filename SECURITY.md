@@ -31,8 +31,15 @@ this plugin sends data to TypeSafe's API at `api.typesafe.ai`. Concretely:
   claims the work, or verification of it, is finished.
 - **File contents — only when you point an MCP tool at them.** `jev_rank` with `paths`/`glob` and
   `jev_verify` with `evidence_path` read files from disk on the caller's behalf and send their
-  content (or line-ranged chunks of it) to be scored or checked. Nothing else in this plugin reads
-  file content; the hooks only ever see the tool call itself, not the files a tool touches.
+  content (or line-ranged chunks of it) to be scored or checked.
+- **The `Stop` claim check (0.6.0)** is the one hook that reads the workspace. When a final message
+  names a file, an identifier, or a change, the check reads `git diff HEAD` and asks whether the
+  named files exist, through a dedicated hook-safe reader (`src/hooks/workspace.ts`). That reader
+  makes the same refusals as the file-access layer — sensitive paths, anything outside the cwd
+  resolved through `realpath` (symlinks included), a 512 KB per-file cap — and runs git through
+  `execFile` with an argument array (never a shell) and `GIT_EXTERNAL_DIFF`/`GIT_PAGER` stripped, so
+  a repository's own config cannot turn a diff into code execution. Only the diff and the extracted
+  change sentences reach the model; the deterministic file/identifier checks send nothing.
 
 Everything sent is **redacted before logging and before sending**: values that look like secrets
 (`sk-…`, `ghp_…`, `AKIA…`, `Bearer …`, `password=…`, PEM blocks, long hex or base64 following

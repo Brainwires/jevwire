@@ -9,7 +9,7 @@
     {
       "name": "jev",
       "description": "Puts a fast calibrated classifier at the harness boundaries: hands Claude a note about a risky tool call, denies the two block-grade cases once with a reason Claude can answer, flags tool results that read like prompt injection, and catches a turn that stops short of the work it was asked to do. Advisory to the agent, never a prompt to you, and fail-open.",
-      "version": "0.5.2",
+      "version": "0.6.0",
       "author": {
         "name": "Brainwires"
       },
