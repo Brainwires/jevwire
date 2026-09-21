@@ -7,7 +7,7 @@
  * cold start is a tax on the whole session.
  */
 
-import { existsSync, readFileSync, statSync } from "node:fs";
+import { existsSync, readdirSync, readFileSync, statSync } from "node:fs";
 import { join } from "node:path";
 import { describe, expect, it } from "vitest";
 
@@ -70,6 +70,26 @@ describe("plugin/dist", () => {
 
   it("bundles the MCP SDK into the server", () => {
     expect(readFileSync(mcp, "utf8")).toContain("@modelcontextprotocol");
+  });
+
+  it("keeps src/hooks off the MCP file layer, so hook.mjs never pulls it in", () => {
+    // The one hook-side reader is `src/hooks/workspace.ts`, with its own
+    // refusals; `src/files/` (zod, the whole file layer) must stay out of the
+    // dependency-free bundle. This is the static guard on that.
+    const hooksDir = join(root, "src", "hooks");
+    const offenders: string[] = [];
+    const walk = (dir: string): void => {
+      for (const entry of readdirSync(dir, { withFileTypes: true })) {
+        const full = join(dir, entry.name);
+        if (entry.isDirectory()) {
+          walk(full);
+        } else if (entry.name.endsWith(".ts")) {
+          if (/from\s+"(?:\.\.\/)+files\//.test(readFileSync(full, "utf8"))) offenders.push(full);
+        }
+      }
+    };
+    walk(hooksDir);
+    expect(offenders).toEqual([]);
   });
 
   it("adds no shebang to the hook, which is invoked as `node <file>`", () => {
