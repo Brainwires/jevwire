@@ -28,6 +28,9 @@ import { DEFAULT_IDLE_MS, DEFAULT_PORT } from "./daemon/protocol.js";
 export const GATE_LEVELS = ["off", "advisory", "strict"] as const;
 export type GateLevel = (typeof GATE_LEVELS)[number];
 
+export const LINT_LEVELS = ["off", "tripwire", "advisory"] as const;
+export type LintLevel = (typeof LINT_LEVELS)[number];
+
 /** 0.2.x `gate_mode` values, and what each one means as a `gate`. */
 const GATE_MODE_MIGRATION: Record<string, GateLevel> = {
   off: "off",
@@ -51,6 +54,16 @@ export interface HookConfig {
   stopCheck: boolean;
   screenResults: boolean;
   routePrompts: boolean;
+  /**
+   * Semantic code lint on in-project edits. `tripwire`: only the block-grade
+   * checks (a hardcoded secret, a removed test) trip; `advisory`: notes for the
+   * rest, the CLAUDE.md conventions and commit scope; `off`: none.
+   */
+  lint: LintLevel;
+  /** Ask one Noul per extracted CLAUDE.md convention line. */
+  lintConventions: boolean;
+  /** The model half of the Stop claim check (git diff HEAD). Stage 1 is free. */
+  verifyClaims: boolean;
   autoThreshold: number;
   reviewThreshold: number;
   /**
@@ -99,6 +112,9 @@ export const HOOK_DEFAULTS = {
   stopCheck: true,
   screenResults: true,
   routePrompts: false,
+  lint: "advisory" as LintLevel,
+  lintConventions: true,
+  verifyClaims: true,
   autoThreshold: 0.85,
   reviewThreshold: 0.6,
   confidenceThreshold: 0.85,
@@ -175,6 +191,15 @@ export function installIdFromScriptPath(scriptPath: string | undefined): string 
   return `${plugin}@${marketplace}`.replace(/[^A-Za-z0-9_-]/g, "-");
 }
 
+/** Read the lint level, migrating an unknown value to the default with a warning. */
+function readLint(env: Env, warnings: string[]): LintLevel {
+  const raw = read(env, "lint", "JEV_LINT");
+  if (raw === undefined) return HOOK_DEFAULTS.lint;
+  if ((LINT_LEVELS as readonly string[]).includes(raw)) return raw as LintLevel;
+  warnings.push(`lint=${JSON.stringify(raw)} is not one of off|tripwire|advisory; using ${HOOK_DEFAULTS.lint}.`);
+  return HOOK_DEFAULTS.lint;
+}
+
 export function loadHookConfig(env: Env = process.env): HookConfig {
   const warnings: string[] = [];
 
@@ -233,6 +258,9 @@ export function loadHookConfig(env: Env = process.env): HookConfig {
     stopCheck: readBool(env, "stop_check", HOOK_DEFAULTS.stopCheck, warnings, "JEV_STOP_CHECK"),
     screenResults: readBool(env, "screen_results", HOOK_DEFAULTS.screenResults, warnings, "JEV_SCREEN_RESULTS"),
     routePrompts: readBool(env, "route_prompts", HOOK_DEFAULTS.routePrompts, warnings, "JEV_ROUTE_PROMPTS"),
+    lint: readLint(env, warnings),
+    lintConventions: readBool(env, "lint_conventions", HOOK_DEFAULTS.lintConventions, warnings, "JEV_LINT_CONVENTIONS"),
+    verifyClaims: readBool(env, "verify_claims", HOOK_DEFAULTS.verifyClaims, warnings, "JEV_VERIFY_CLAIMS"),
     autoThreshold: auto,
     reviewThreshold: Math.min(review, auto),
     confidenceThreshold: readNumber(

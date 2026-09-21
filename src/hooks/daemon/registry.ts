@@ -20,7 +20,7 @@
  * that session with the wrong settings.
  */
 
-import { GATE_LEVELS, type GateLevel, type HookConfig } from "../config.js";
+import { GATE_LEVELS, LINT_LEVELS, type GateLevel, type HookConfig, type LintLevel } from "../config.js";
 
 /**
  * A session's configuration as the daemon needs it: everything except the
@@ -78,6 +78,12 @@ export function readSessionConfig(raw: unknown, fallback: SessionConfig): Sessio
     stopCheck: bool(value.stopCheck, fallback.stopCheck),
     screenResults: bool(value.screenResults, fallback.screenResults),
     routePrompts: bool(value.routePrompts, fallback.routePrompts),
+    lint:
+      typeof value.lint === "string" && (LINT_LEVELS as readonly string[]).includes(value.lint)
+        ? (value.lint as LintLevel)
+        : fallback.lint,
+    lintConventions: bool(value.lintConventions, fallback.lintConventions),
+    verifyClaims: bool(value.verifyClaims, fallback.verifyClaims),
     autoThreshold: auto,
     reviewThreshold: Math.min(num(value.reviewThreshold, fallback.reviewThreshold, 0, 1), auto),
     confidenceThreshold: num(value.confidenceThreshold, fallback.confidenceThreshold, 0.5, 0.99),

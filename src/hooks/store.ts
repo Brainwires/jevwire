@@ -253,6 +253,22 @@ export interface DecisionRecord {
   chunks_total?: number;
   chunks_judged?: number;
   chunks_failed?: number;
+  /** Which 0.6.0 subsystem wrote this record; absent means the gate. */
+  kind?: "gate" | "lint" | "commit" | "claims";
+  /** lint/commit: the firm finding ids (conventions as `conv:<text>`). */
+  findings?: string[];
+  /** lint/commit: the redacted relative path of the edited file. */
+  file?: string;
+  /** Stop claims: the counts and the newest few items. */
+  claims?: {
+    extracted: number;
+    fabricated: number;
+    contradicted: number;
+    supported: number;
+    not_addressed: number;
+    unlocated: number;
+    items: { claim: string; verdict: string; p?: number | undefined }[];
+  };
   model?: string;
   latency_ms?: number;
   input_tokens?: number;

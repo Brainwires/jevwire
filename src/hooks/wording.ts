@@ -290,6 +290,24 @@ export function injectionNoteText(input: { tool: string; p: number }): string {
  * agent's problem to resolve on its next step, and the user is not the audience
  * for it the way they are for an injection attempt.
  */
+/**
+ * The Stop block when the final message names things the workspace does not
+ * show. Declarative and specific: it lists the items, and says which checks
+ * were code and which were the classifier reading a diff.
+ */
+export function claimsBlockText(items: readonly { claim: string; verdict: string; p?: number | undefined }[]): string {
+  const shown = items.slice(0, 3).map((item) => item.claim);
+  const list = shown.join("; ");
+  const anyContradicted = items.some((item) => item.verdict === "contradicted");
+  const provenance = anyContradicted
+    ? "The file and identifier checks ran in code; the diff check is the jev classifier reading `git diff HEAD`, which shows changes and not the resulting code."
+    : "The file and identifier checks ran in code, against the project and `git diff HEAD`.";
+  return (
+    `[jev] Your final message names ${items.length} thing${items.length === 1 ? "" : "s"} the workspace does not ` +
+    `show: ${list}. ${provenance} The message can be corrected, or the missing change made.`
+  );
+}
+
 export function contradictionNoteText(input: { tool: string; p: number }): string {
   return (
     `[jev] This ${input.tool} result was scored as stating something that conflicts with an assumption in ` +

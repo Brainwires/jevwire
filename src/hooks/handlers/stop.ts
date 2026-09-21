@@ -12,10 +12,19 @@
  */
 
 import type { NoulAnswer, Question } from "../../decision/types.js";
+import { runVerifyCore, type ClaimResult } from "../../tools/verify-core.js";
+import { checkReferences, extractClaims, stopClaimsPolicy, type StopClaimsResult } from "../claims.js";
 import { redactAndClamp } from "../redact.js";
 import { modelCost } from "../store.js";
 import { EMPTY_LEDGER, verificationPolicy } from "../verification.js";
 import type { Deps, HookInput, HookOutput } from "../types.js";
+import { claimsBlockText } from "../wording.js";
+import { gitDiffHead, gitNameStatus, projectFileExists, readProjectFile } from "../workspace.js";
+
+/** Evidence pieces the Stop verify is allowed, for its time budget. */
+const MAX_CLAIM_PIECES = 2;
+/** Change sentences verified against the diff, per stop. */
+const MAX_VERIFIED_CLAIMS = 20;
 
 /** Below this, the message is an acknowledgement, not a report. */
 export const MIN_MESSAGE_CHARS = 40;
@@ -312,10 +321,14 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
             .map((prompt) => redactAndClamp(prompt, MAX_REQUEST_CHARS)),
         };
 
+  const thresholds = { auto: config.autoThreshold, review: config.reviewThreshold };
+  const cwd = input.cwd;
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), config.timeoutMs);
   try {
-    const result = await deps.model.evaluate({
+    // The stop-short request and the claim checks run together: the model reads
+    // the message while git and the deterministic stage read the workspace.
+    const stopRequest = deps.model.evaluate({
       state: {
         request,
         final_message: redactAndClamp(message.slice(-MAX_MESSAGE_CHARS), MAX_MESSAGE_CHARS),
@@ -324,6 +337,46 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
       signal: controller.signal,
     });
 
+    let claimsPolicy: StopClaimsResult | undefined;
+    let claimsTimedOut = false;
+    if (cwd !== undefined) {
+      try {
+        const extracted = extractClaims(message);
+        const [nameStatus, headDiff] = await Promise.all([gitNameStatus(cwd), gitDiffHead(cwd)]);
+        const stage1 = checkReferences(extracted, {
+          fileExists: (rel) => projectFileExists(cwd, rel),
+          readFile: (rel) => readProjectFile(cwd, rel),
+          nameStatus,
+          diffText: headDiff?.text ?? "",
+        });
+        let verifiedClaims: ClaimResult[] | undefined;
+        if (config.verifyClaims && extracted.claims.length > 0 && headDiff !== undefined) {
+          try {
+            const verify = await runVerifyCore(
+              deps.model,
+              {
+                claims: extracted.claims.map((claim) => claim.text).slice(0, MAX_VERIFIED_CLAIMS),
+                evidence: headDiff.text,
+                thresholds,
+                maxPieces: MAX_CLAIM_PIECES,
+              },
+              { maxConcurrency: MAX_CLAIM_PIECES },
+              controller.signal,
+            );
+            verifiedClaims = verify.claims;
+          } catch {
+            // A slow diff or a timed-out verify degrades to stage 1, logged.
+            claimsTimedOut = true;
+          }
+        }
+        claimsPolicy = stopClaimsPolicy(stage1, verifiedClaims, config.autoThreshold);
+      } catch {
+        // Any workspace read failure: fail open, no claim block.
+        claimsPolicy = undefined;
+      }
+    }
+
+    const result = await stopRequest;
     const answers = result.answers as Record<string, NoulAnswer | undefined>;
     const noul = (key: string): number => (typeof answers[key]?.noul === "number" ? (answers[key] as NoulAnswer).noul : 0);
     const signals: StopSignals = {
@@ -346,8 +399,19 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
       deps.now(),
     );
 
-    const blocked = policy.block || verified.block;
-    const decision = blocked ? "block" : verified.logOnly ? "unverified-claim" : "allow";
+    const claimsBlock = claimsPolicy?.block ?? false;
+    const blocked = policy.block || verified.block || claimsBlock;
+    const decision = blocked
+      ? policy.block || verified.block
+        ? "block"
+        : "claims-block"
+      : verified.logOnly
+        ? "unverified-claim"
+        : claimsTimedOut
+          ? "claims-timeout"
+          : claimsPolicy !== undefined
+            ? "claims-clean"
+            : "allow";
     store.append({
       ...base,
       decision,
@@ -360,6 +424,9 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
       },
       ...(policy.unfinished_by !== undefined ? { unfinished_by: policy.unfinished_by } : {}),
       ...(subagent !== undefined ? { subagent } : {}),
+      ...(claimsPolicy !== undefined
+        ? { claims: { ...claimsPolicy.counts, items: claimsPolicy.items.slice(0, 5) } }
+        : {}),
       reasons: [...policy.reasons, ...verified.reasons],
       ...modelCost(result),
     });
@@ -368,8 +435,8 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
 
     store.updateSession(sessionId, (state) => ({ ...state, stop_blocks: state.stop_blocks + 1 }), deps.now());
 
-    // The stop-short rule is the older and broader of the two, so it speaks
-    // first when both fire.
+    // Precedence: stop-short (oldest, broadest) speaks first, then the
+    // verification ledger, then the workspace claim check.
     if (policy.block && policy.unfinished_by !== undefined) {
       const reason = policy.unfinished_by;
       return {
@@ -380,7 +447,9 @@ export async function handleStop(input: HookInput, deps: Deps): Promise<HookOutp
       };
     }
 
-    return { decision: "block", reason: verified.reason as string };
+    if (verified.block) return { decision: "block", reason: verified.reason as string };
+
+    return { decision: "block", reason: claimsBlockText((claimsPolicy as StopClaimsResult).items) };
   } catch (error) {
     store.append({
       ...base,
