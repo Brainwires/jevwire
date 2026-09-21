@@ -8,9 +8,14 @@ import {
   gitDiffHead,
   gitNameStatus,
   gitStagedDiff,
+  WORKSPACE_LIMITS,
   projectFileExists,
   readProjectFile,
 } from "../../src/hooks/workspace.js";
+
+// A generous git timeout so these real-repo tests do not flake under heavy
+// parallel CI load; production keeps the 1500 ms default.
+const L = { ...WORKSPACE_LIMITS, gitTimeoutMs: 30_000 };
 
 let base: string;
 let root: string;
@@ -110,16 +115,16 @@ describe("git readers", () => {
     g("commit", "-q", "-m", "init");
 
     writeFileSync(join(root, "src", "app.ts"), "export const x = 2;\n");
-    const head = await gitDiffHead(root);
+    const head = await gitDiffHead(root, undefined, L);
     expect(head?.text).toContain("export const x");
     expect(head?.text).toContain("+export const x = 2;");
 
     g("add", "src/app.ts");
-    const staged = await gitStagedDiff(root);
+    const staged = await gitStagedDiff(root, L);
     expect(staged?.text).toContain("+export const x = 2;");
     expect(staged?.stat).toContain("app.ts");
 
-    const status = await gitNameStatus(root);
+    const status = await gitNameStatus(root, L);
     expect(status.get("src/app.ts")).toBe("M");
   });
 
@@ -136,10 +141,10 @@ describe("git readers", () => {
     rmSync(join(root, "src", "old.ts"));
     writeFileSync(join(root, "src", "new.ts"), "new\n");
 
-    const status = await gitNameStatus(root);
+    const status = await gitNameStatus(root, L);
     expect(status.get("src/old.ts")).toBe("D");
     // A brand-new untracked file is not in `git diff HEAD` until added.
     g("add", "src/new.ts");
-    expect((await gitNameStatus(root)).get("src/new.ts")).toBe("A");
+    expect((await gitNameStatus(root, L)).get("src/new.ts")).toBe("A");
   });
 });

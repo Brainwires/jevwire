@@ -37,7 +37,11 @@ export interface WorkspaceLimits {
 
 export const WORKSPACE_LIMITS: WorkspaceLimits = {
   maxFileBytes: 512 * 1024,
-  gitTimeoutMs: 600,
+  // Generous enough to survive process-spawn contention on a loaded machine —
+  // git on a working tree is tens of milliseconds unloaded — while still
+  // bounding a stuck or enormous repo. The Stop path runs git first and then
+  // its model calls in parallel, so this still fits the daemon's wall clock.
+  gitTimeoutMs: 1500,
   maxDiffChars: 40_000,
 };
 

@@ -7,6 +7,24 @@ documented in this file. The npm package is published as `jevwire` and the Claud
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.2] — 2026-09-21, commit scope
+
+The commit-time half of `docs/DESIGN_0.6.md` §3, finishing the code-development work. When a `git commit`
+is about to run, the staged diff is judged:
+
+- **`pr_scope`** — a Score of how focused the diff is (one change / one plus a small tweak / several
+  independent changes). A **note** when it reads as several bundled changes, firm on the *mass* of that
+  level, never on a hunk count the model computed — Jev is not asked to count.
+- **`message_describes_diff`** — a **note** when a `-m`/`-F` message does not describe what the diff
+  changed.
+- **a hardcoded secret in the diff's added lines** — a **tripwire** (deny, re-runnable after
+  `# jev:intended …` on the command's last line). This catches a secret written via a Bash heredoc that
+  the edit-time lint never sees.
+
+Notes are deduped on the staged diff and share the 5-per-prompt cap; the check runs only under
+`lint` (advisory or tripwire), reads `git diff --cached` through the hook-safe reader, and is silent
+outside a repo or with nothing staged.
+
 ## [0.6.1] — 2026-09-21, semantic code lint
 
 The edit-time half of `docs/DESIGN_0.6.md` §3: an in-project edit is now judged before it is written,

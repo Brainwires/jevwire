@@ -841,7 +841,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.6.1";
+var HOOK_VERSION = "0.6.2";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
@@ -3325,6 +3325,14 @@ function lintTripText(input) {
   const narrower = secret ? "A version that reads the value from the environment needs no marker." : "A narrower edit that keeps the assertion needs no marker.";
   return `[jev] tripwire ${input.id}: this ${input.tool} call was not run. The jev classifier scored the new text as ${scored}. The classifier reads the edit literally and can be wrong; ${caveat}. The call is re-runnable unchanged after a separate Bash call \`true # jev:intended ${input.id}: <the sentence of the user's request that requires this exact edit>\`; it then passes this hook without further judgment and Claude Code's own permission rules still apply. ${narrower} Marker text is recorded and shown to the user by /jev:why.`;
 }
+function commitScopeNoteText(input) {
+  const scored = input.scope_p3 !== void 0 ? `bundling several independent changes (p=${p(input.scope_p3)})` : `not fully described by its message (p(describes)=${p(input.message_describes ?? 0)})`;
+  const messageClause = input.scope_p3 !== void 0 && input.message_describes !== void 0 ? ` The commit message was scored as not describing it (p(describes)=${p(input.message_describes)}).` : "";
+  return `[jev] The staged diff behind this git commit (${input.files} files, +${input.added}/-${input.deleted}) was scored by the jev classifier as ${scored}.${messageClause} It read the diff and the message, not the branch history.`;
+}
+function commitSecretTripText(input) {
+  return `[jev] tripwire ${input.id}: this git commit was not run. The jev classifier scored the staged diff as adding a hardcoded credential (p=${p(input.p)}). The classifier reads literally and can be wrong. It is re-runnable unchanged with \`# jev:intended <the sentence of the user's request that requires committing this literal>\` on its last line; it then passes this hook and Claude Code's own permission rules still apply. Marker text is recorded and shown to the user by /jev:why.`;
+}
 function contradictionNoteText(input) {
   return `[jev] This ${input.tool} result was scored as stating something that conflicts with an assumption in the request (contradicts_premise=${p(input.p)}) by the jev classifier: the text and the last user prompt disagree about a fact. Source: jev classifier, literal reading of the result and the prompt only.`;
 }
@@ -4163,7 +4171,11 @@ import { promisify } from "node:util";
 var run = promisify(execFile);
 var WORKSPACE_LIMITS = {
   maxFileBytes: 512 * 1024,
-  gitTimeoutMs: 600,
+  // Generous enough to survive process-spawn contention on a loaded machine —
+  // git on a working tree is tens of milliseconds unloaded — while still
+  // bounding a stuck or enormous repo. The Stop path runs git first and then
+  // its model calls in parallel, so this still fits the daemon's wall clock.
+  gitTimeoutMs: 1500,
   maxDiffChars: 4e4
 };
 var BINARY_SNIFF_BYTES = 8192;
@@ -4255,6 +4267,13 @@ async function gitDiffHead(cwd, paths, limits = WORKSPACE_LIMITS) {
   if (paths !== void 0 && paths.length > 0) args.push("--", ...paths);
   const out = await git(cwd, args, limits);
   return out === void 0 ? void 0 : clampDiff(out, limits.maxDiffChars);
+}
+async function gitStagedDiff(cwd, limits = WORKSPACE_LIMITS) {
+  const out = await git(cwd, ["diff", "--cached", "--no-color", "--no-ext-diff", "-U3"], limits);
+  if (out === void 0) return void 0;
+  const stat = await git(cwd, ["diff", "--cached", "--stat", "--no-color"], limits) ?? "";
+  const clamped = clampDiff(out, limits.maxDiffChars);
+  return { text: clamped.text, stat: stat.slice(0, 4e3), truncated: clamped.truncated };
 }
 async function gitNameStatus(cwd, limits = WORKSPACE_LIMITS) {
   const out = await git(cwd, ["diff", "HEAD", "--name-status", "--no-color"], limits);
@@ -4883,6 +4902,193 @@ async function handleLint(input, deps, action, base, now) {
   }
 }
 
+// src/hooks/commit-core.ts
+var SCOPE_SEVERAL = 2;
+var COMMIT_QUESTIONS = {
+  pr_scope: {
+    type: "score",
+    instructions: {
+      question: "How focused is `diff` on a single change?",
+      note: "Judge the number of independent changes, not the size of any one change. `stat` lists the files touched."
+    },
+    criteria: [
+      {
+        summary: "One change, clearly stated",
+        signals: ["Every hunk serves the same fix or feature", "Files touched are the ones that change needs"]
+      },
+      {
+        summary: "One main change plus a small related tweak",
+        signals: ["A primary change and one minor adjacent edit", "The tweak supports the main change"]
+      },
+      {
+        summary: "Several independent changes bundled together",
+        signals: [
+          "Two or more unrelated fixes or features",
+          "Hunks that could each be their own commit",
+          "Formatting or renames across files unrelated to the main change"
+        ]
+      }
+    ]
+  },
+  message_describes_diff: {
+    type: "noul",
+    instructions: "Does `commit_message` describe the changes in `diff`?",
+    criteria: {
+      true: "Every change in `diff` is covered by `commit_message`, at the level of what changed and why.",
+      false: "`commit_message` names a change `diff` does not contain, or leaves a substantial part of `diff` unmentioned."
+    }
+  },
+  hardcodes_secret: {
+    type: "noul",
+    instructions: {
+      question: "Do the added lines of `diff` write a real credential into the code as a literal?",
+      inspect: "added_lines"
+    },
+    criteria: {
+      true: {
+        what: "An API key, access token, password, private key or signing secret appears as a literal string value in an added line.",
+        examples: ['`+ const apiKey = "sk-live-\u2026"`', "an added `-----BEGIN PRIVATE KEY-----` block"]
+      },
+      false: {
+        what: "The value is read from the environment or a secret store, or the literal is plainly a placeholder or example.",
+        examples: ["`+ process.env.API_KEY`", '`+ "your-key-here"`']
+      }
+    }
+  }
+};
+function commitState(input) {
+  const state = { stat: input.stat, diff: input.diff, added_lines: input.added_lines };
+  if (input.commit_message !== void 0) state.commit_message = input.commit_message;
+  if (input.user_request !== void 0) state.user_request = input.user_request;
+  return state;
+}
+function commitQuestions(input) {
+  const questions = { pr_scope: COMMIT_QUESTIONS.pr_scope };
+  if (input.hasMessage) questions.message_describes_diff = COMMIT_QUESTIONS.message_describes_diff;
+  if (input.askSecret) questions.hardcodes_secret = COMMIT_QUESTIONS.hardcodes_secret;
+  return questions;
+}
+function commitOutcome(answers, thresholds) {
+  const scopeP3 = answers.pr_scope !== void 0 ? levelMass(answers.pr_scope, [SCOPE_SEVERAL]) : void 0;
+  const describes = answers.message_describes_diff?.noul;
+  const secret = answers.hardcodes_secret?.noul;
+  return {
+    scope_p3: scopeP3,
+    scopeNote: scopeP3 !== void 0 && scopeP3 >= thresholds.auto,
+    messageNote: describes !== void 0 && lean(describes, thresholds.auto) === "no",
+    secretTrip: secret !== void 0 && lean(secret, thresholds.auto) === "yes",
+    message_describes: describes
+  };
+}
+function addedLinesOf(diff) {
+  return diff.split("\n").filter((line) => line.startsWith("+") && !line.startsWith("+++"));
+}
+
+// src/hooks/handlers/commit.ts
+var MAX_COMMIT_DIFF = 24e3;
+function isGitCommit(command) {
+  if (typeof command !== "string") return false;
+  if (!/\bgit\b[^\n|;&]*\bcommit\b/.test(command)) return false;
+  if (/--dry-run\b/.test(command)) return false;
+  return true;
+}
+function commitMessage(command) {
+  const m = /-m\s+("([^"]*)"|'([^']*)'|(\S+))/.exec(command);
+  if (m !== null) return m[2] ?? m[3] ?? m[4];
+  if (/-F\b/.test(command)) return "(message from a file)";
+  return void 0;
+}
+function countFiles(diff) {
+  return (diff.match(/^diff --git /gm) ?? []).length;
+}
+function countDeleted(diff) {
+  return diff.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
+}
+async function handleCommit(input, deps, command, base, fp, now) {
+  const { config, store } = deps;
+  const sessionId = input.session_id ?? "unknown";
+  const cwd = input.cwd ?? process.cwd();
+  if (deps.model === null) return void 0;
+  const staged = await gitStagedDiff(cwd);
+  if (staged === void 0 || staged.text.trim() === "") {
+    return void 0;
+  }
+  const diff = staged.text.slice(0, MAX_COMMIT_DIFF);
+  const added = addedLinesOf(diff);
+  const askSecret = added.some(looksLikeSecretLiteral);
+  const message = commitMessage(command);
+  const hasMessage = message !== void 0;
+  const session = store.readSession(sessionId);
+  const state = commitState({
+    stat: staged.stat.slice(0, 4e3),
+    diff,
+    added_lines: added.slice(0, 120),
+    askSecret,
+    hasMessage,
+    ...message !== void 0 ? { commit_message: message } : {},
+    ...session.prompts.length > 0 ? { user_request: requestText(session.prompts, MAX_PROMPT_CHARS) } : {}
+  });
+  const questions = commitQuestions({ askSecret, hasMessage });
+  const diffFp = fingerprint("commit", { diff });
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const result = await deps.model.evaluate({ state, questions, signal: controller.signal });
+    const answers = result.answers;
+    const secretAnswer = answers.hardcodes_secret?.type === "noul" ? answers.hardcodes_secret : void 0;
+    const outcome = commitOutcome(
+      {
+        pr_scope: answers.pr_scope !== void 0 && answers.pr_scope.type === "score" ? answers.pr_scope : void 0,
+        message_describes_diff: answers.message_describes_diff !== void 0 && answers.message_describes_diff.type === "noul" ? answers.message_describes_diff : void 0,
+        hardcodes_secret: secretAnswer
+      },
+      { auto: config.autoThreshold, review: config.reviewThreshold }
+    );
+    const record = {
+      ...base,
+      kind: "commit",
+      signals: {
+        ...outcome.scope_p3 !== void 0 ? { pr_scope_3: outcome.scope_p3 } : {},
+        ...outcome.message_describes !== void 0 ? { message_describes_diff: outcome.message_describes } : {},
+        ...outcome.secretTrip ? { hardcodes_secret: secretAnswer?.noul ?? 0 } : {}
+      },
+      ...modelCost(result)
+    };
+    if (outcome.secretTrip) {
+      const id = tripIdOf(fp);
+      const channel = tripChannel(config.askOnTrip, input.permission_mode);
+      const text = commitSecretTripText({ id, p: secretAnswer?.noul ?? 0 });
+      const trip = { id, fingerprint: fp, tool_name: "Bash", ts: now, source: "commit", reason: "staged secret", denies: 1 };
+      store.openTrip(sessionId, trip, now);
+      store.append({ ...record, decision: "commit-trip", trip_id: id, source: "commit", channel, emitted: redactAndClamp(text, MAX_EMITTED_CHARS) });
+      return tripOutput(channel, text);
+    }
+    if (outcome.scopeNote || outcome.messageNote) {
+      if (store.wasNoted(sessionId, diffFp, NOTE_DEDUPE_TTL_MS, now) || (session.notes_this_prompt ?? 0) >= MAX_NOTES_PER_PROMPT) {
+        store.append({ ...record, decision: "commit-silent" });
+        return void 0;
+      }
+      const text = commitScopeNoteText({
+        files: countFiles(diff),
+        added: added.length,
+        deleted: countDeleted(diff),
+        ...outcome.scopeNote ? { scope_p3: outcome.scope_p3 } : {},
+        ...outcome.messageNote ? { message_describes: outcome.message_describes } : {}
+      });
+      store.noteEmitted(sessionId, diffFp, now);
+      store.append({ ...record, decision: "commit-note", channel: "note", emitted: redactAndClamp(text, MAX_EMITTED_CHARS) });
+      return noteOutput(text);
+    }
+    store.append({ ...record, decision: "commit-silent" });
+    return void 0;
+  } catch (error) {
+    store.append({ ...base, kind: "commit", decision: "commit-error", error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });
+    return void 0;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // src/hooks/handlers/pre-tool-use.ts
 var MAX_ACTION_CHARS = 4e3;
 var ACTION_TEXT_FIELDS = ["command", "content_head", "old_string", "new_string", "text"];
@@ -5029,6 +5235,9 @@ async function handlePreToolUse(input, deps) {
       emitted: redactAndClamp(text, MAX_EMITTED_CHARS)
     });
     return tripOutput(channel, text);
+  }
+  if (toolName === "Bash" && config.lint !== "off" && isGitCommit(typeof action.command === "string" ? action.command : void 0)) {
+    return handleCommit(input, deps, action.command, base, fp, now);
   }
   if (marker?.reason !== void 0) {
     store.append({

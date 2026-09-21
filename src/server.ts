@@ -22,7 +22,7 @@ import * as verifyTool from "./tools/verify.js";
 import type { ToolConfig } from "./tools/shared.js";
 
 export const SERVER_NAME = "jevwire";
-export const SERVER_VERSION = "0.6.1";
+export const SERVER_VERSION = "0.6.2";
 
 /** Read-only, but every tool reaches an external API. */
 const ANNOTATIONS = { readOnlyHint: true, openWorldHint: true } as const;
