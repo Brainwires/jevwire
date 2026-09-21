@@ -105,6 +105,17 @@ export {
 } from "./tools/rank.js";
 
 export {
+  description as pickDescription,
+  inputSchema as pickInputSchema,
+  NONE_KEY as PICK_NONE_KEY,
+  outputSchema as pickOutputSchema,
+  PickInputError,
+  run as runPick,
+  type PickToolInput,
+  type PickToolOutput,
+} from "./tools/pick.js";
+
+export {
   allSupported,
   description as verifyDescription,
   inputSchema as verifyInputSchema,

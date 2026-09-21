@@ -16,6 +16,7 @@ import * as evaluateTool from "./tools/evaluate.js";
 import * as gateActionTool from "./tools/gate-action.js";
 import * as listModelsTool from "./tools/list-models.js";
 import * as nextStepTool from "./tools/next-step.js";
+import * as pickTool from "./tools/pick.js";
 import * as rankTool from "./tools/rank.js";
 import * as verifyTool from "./tools/verify.js";
 import type { ToolConfig } from "./tools/shared.js";
@@ -98,6 +99,17 @@ export function createServer(model: DecisionModel | null, config: Config): McpSe
       annotations: ANNOTATIONS,
     },
     wrap(rankTool.run),
+  );
+
+  server.registerTool(
+    pickTool.name,
+    {
+      description: pickTool.description,
+      inputSchema: pickTool.inputShape,
+      outputSchema: pickTool.outputShape,
+      annotations: ANNOTATIONS,
+    },
+    wrap(pickTool.run),
   );
 
   server.registerTool(

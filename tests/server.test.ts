@@ -13,6 +13,7 @@ import { choice, FakeModel, noul, score } from "./helpers/fake-model.js";
 const TOOL_NAMES = [
   "jev_evaluate",
   "jev_rank",
+  "jev_pick",
   "jev_verify",
   "jev_gate_action",
   "jev_next_step",
@@ -189,7 +190,7 @@ describe("createServer", () => {
 
     // The server still starts and still advertises its tools.
     const { tools } = await client.listTools();
-    expect(tools).toHaveLength(6);
+    expect(tools).toHaveLength(7);
 
     for (const name of TOOL_NAMES) {
       const result = await client.callTool({
@@ -199,6 +200,8 @@ describe("createServer", () => {
             ? { state: "s", questions: { q: { type: "noul", instructions: "Is it urgent?" } } }
             : name === "jev_rank"
               ? { query: "q", candidates: [{ id: "a", text: "t" }] }
+              : name === "jev_pick"
+              ? { question: "q", candidates: [{ id: "a", text: "t" }, { id: "b", text: "u" }] }
               : name === "jev_verify"
                 ? { claims: ["c"], evidence: "e" }
                 : name === "jev_gate_action"
