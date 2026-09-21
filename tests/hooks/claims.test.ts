@@ -90,6 +90,20 @@ describe("checkReferences (stage 1)", () => {
     expect(idents[0]!.verdict).toBe("present");
   });
 
+  it("does not fabricate a bare basename that lives deeper in the tree", () => {
+    // `workspace.ts` in prose is a reference by name, not a path claim; it must
+    // not block just because it is not at the project root.
+    const extracted = extractClaims("I updated `workspace.ts` and `plugin.json` and `CLAUDE.md`.");
+    const { files } = checkReferences(extracted, context({ fileExists: () => "no" }));
+    for (const f of files) expect(f.verdict).toBe("unlocated");
+  });
+
+  it("still fabricates a path-shaped reference that does not resolve", () => {
+    const extracted = extractClaims("I created src/nope.ts.");
+    const { files } = checkReferences(extracted, context({ fileExists: () => "no" }));
+    expect(files[0]!.verdict).toBe("fabricated");
+  });
+
   it("does not count a refused (sensitive) path", () => {
     const extracted = extractClaims("Wrote config.json for the app.");
     const { files } = checkReferences(extracted, context({ fileExists: () => "refused" }));

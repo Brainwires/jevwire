@@ -7,6 +7,24 @@ documented in this file. The npm package is published as `jevwire` and the Claud
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.3] — 2026-09-21
+
+### Fixed
+
+- **Stop claim check: a bare filename is no longer a false "not in the project".** Stage 1 resolved a
+  file reference relative to the project root, so a message that mentioned `workspace.ts`,
+  `plugin.json` or `CLAUDE.md` — files that live in a subdirectory — was flagged as fabricated and the
+  Stop blocked. A reference with **no directory separator** is a reference by name, not a path claim,
+  so it now reads as `unlocated` (log-only) instead of `fabricated`; only a real path (with a `/`) that
+  does not resolve still blocks. Found live: the check blocked its own author twice for naming the
+  plugin's own files.
+
+### Added
+
+- **`docs/BENCHMARKS.md`** — measured from a real 1,017-record decision log plus microbenchmarks: hook
+  bundle 287 KiB (deps: none), skip-path prefilter ~24 µs and lint regex gate ~9.6 µs (the free common
+  case), judged model calls p50 536 ms / p95 1,168 ms, ~$0.064 for a heavy development day.
+
 ## [0.6.2] — 2026-09-21, commit scope
 
 The commit-time half of `docs/DESIGN_0.6.md` §3, finishing the code-development work. When a `git commit`

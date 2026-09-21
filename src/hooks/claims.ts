@@ -191,13 +191,21 @@ export function checkReferences(
     const exists = ctx.fileExists(ref.path);
     if (exists === "refused") return { ...ref, verdict: "refused" };
     const status = ctx.nameStatus.get(ref.path);
+    // A bare basename (no directory separator) is a reference *by name*, not a
+    // path claim: `workspace.ts` in prose usually means `src/hooks/workspace.ts`,
+    // and `plugin.json` or `CLAUDE.md` name a file that lives deeper in the tree.
+    // `projectFileExists` resolves relative to the cwd root, so a bare basename
+    // that lives in a subdirectory reads as "no" — which must NOT be a block.
+    // Only a path-shaped reference (with a `/`) that does not resolve is a real
+    // fabrication; a bare name that does not resolve is merely `unlocated`.
+    const hasDir = ref.path.includes("/");
     if (ref.removal) {
       // Says it removed a file. Fine if the diff deletes it or it is gone.
       if (status === "D" || exists === "no") return { ...ref, verdict: "removed-ok" };
-      return { ...ref, verdict: "fabricated" };
+      return { ...ref, verdict: hasDir ? "fabricated" : "unlocated" };
     }
     // A non-removal reference to a file that is not there and not being deleted.
-    if (exists === "no" && status !== "D") return { ...ref, verdict: "fabricated" };
+    if (exists === "no" && status !== "D") return { ...ref, verdict: hasDir ? "fabricated" : "unlocated" };
     if (ref.line !== undefined) {
       const read = ctx.readFile(ref.path);
       if (read.kind === "text") {

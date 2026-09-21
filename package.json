@@ -1,6 +1,6 @@
 {
   "name": "jevwire",
-  "version": "0.6.2",
+  "version": "0.6.3",
   "type": "module",
   "description": "MCP server and embeddable decision layer for TypeSafe AI's Jev System One model",
   "license": "MIT",

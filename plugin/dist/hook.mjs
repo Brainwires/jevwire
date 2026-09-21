@@ -841,7 +841,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.6.2";
+var HOOK_VERSION = "0.6.3";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
@@ -5732,11 +5732,12 @@ function checkReferences(extracted, ctx) {
     const exists = ctx.fileExists(ref.path);
     if (exists === "refused") return { ...ref, verdict: "refused" };
     const status = ctx.nameStatus.get(ref.path);
+    const hasDir = ref.path.includes("/");
     if (ref.removal) {
       if (status === "D" || exists === "no") return { ...ref, verdict: "removed-ok" };
-      return { ...ref, verdict: "fabricated" };
+      return { ...ref, verdict: hasDir ? "fabricated" : "unlocated" };
     }
-    if (exists === "no" && status !== "D") return { ...ref, verdict: "fabricated" };
+    if (exists === "no" && status !== "D") return { ...ref, verdict: hasDir ? "fabricated" : "unlocated" };
     if (ref.line !== void 0) {
       const read2 = ctx.readFile(ref.path);
       if (read2.kind === "text") {
