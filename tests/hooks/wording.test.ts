@@ -16,6 +16,8 @@ import {
   BANNED_IMPERATIVES,
   blastLabel,
   contradictionNoteText,
+  lintNoteText,
+  lintTripText,
   injectionNoteText,
   modelTripText,
   MAX_SUBJECT_CHARS,
@@ -54,6 +56,7 @@ const EVERY_NOTE: [string, string][] = [
   ["wide", note(["wide"])],
   ["scope", note(["scope"])],
   ["several reasons", note(["credential", "outward", "destructive", "wide"])],
+  ["lint note", lintNoteText({ tool: "Edit", subject: "src/x.ts", findings: [{ id: "swallows_exception", p: 0.9 }, { id: "conv_0", p: 0.88, convention: "Prefer a real type over `any`" }], sawConventions: true })],
 ];
 
 const EVERY_TRIP: [string, string][] = [
@@ -69,6 +72,8 @@ const EVERY_TRIP: [string, string][] = [
   ["repeat", tripRepeatText({ id: "t-1a2b3c4d", attempt: 2, seconds: 12.4 })],
   ["injection", injectionNoteText({ tool: "WebFetch", p: 0.96 })],
   ["contradiction", contradictionNoteText({ tool: "WebFetch", p: 0.91 })],
+  ["lint trip secret", lintTripText({ id: "t-1a2b3c4d", tool: "Edit", finding: "hardcodes_secret", p: 0.95 })],
+  ["lint trip test", lintTripText({ id: "t-1a2b3c4d", tool: "Write", finding: "removes_test", p: 0.92 })],
 ];
 
 describe("no agent-facing text is an instruction", () => {

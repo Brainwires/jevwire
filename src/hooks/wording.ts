@@ -308,6 +308,81 @@ export function claimsBlockText(items: readonly { claim: string; verdict: string
   );
 }
 
+/** One lint finding, as it appears in a note. */
+export interface LintNoteFinding {
+  id: string;
+  p: number;
+  /** For a `conv_i` finding, the convention line. */
+  convention?: string | undefined;
+}
+
+/** How a note describes each finding, and the priority order clauses are kept in. */
+const LINT_CLAUSES: { id: string; text: (f: LintNoteFinding) => string }[] = [
+  { id: "removes_test", text: (f) => `removing or disabling a test or assertion (p=${p(f.p)}), which the request was read as asking for` },
+  { id: "swallows_exception", text: (f) => `adding a handler that catches an error and discards it (p=${p(f.p)})` },
+  { id: "changes_public_signature", text: (f) => `changing an exported signature that other files may depend on (p=${p(f.p)})` },
+  { id: "adds_suppression", text: (f) => `adding a new type or lint suppression (p=${p(f.p)})` },
+  { id: "hardcodes_url_or_path", text: (f) => `writing a literal URL or absolute path into code (p=${p(f.p)})` },
+  { id: "leaves_placeholder", text: (f) => `leaving a placeholder where the surrounding code needs an implementation (p=${p(f.p)})` },
+];
+
+/**
+ * The advisory note for a semantic-lint finding on an edit. States what the
+ * classifier read the edit as, names its source, and bounds what it saw. At
+ * most three clauses, in priority order; conventions come last.
+ */
+export function lintNoteText(input: {
+  tool: string;
+  subject: string;
+  findings: readonly LintNoteFinding[];
+  sawConventions: boolean;
+}): string {
+  const clauses: string[] = [];
+  for (const clause of LINT_CLAUSES) {
+    const finding = input.findings.find((f) => f.id === clause.id);
+    if (finding !== undefined) clauses.push(clause.text(finding));
+    if (clauses.length >= 3) break;
+  }
+  for (const finding of input.findings) {
+    if (clauses.length >= 3) break;
+    if (finding.id.startsWith("conv_") && finding.convention !== undefined) {
+      clauses.push(`going against the CLAUDE.md line "${finding.convention.slice(0, 100)}" (p=${p(finding.p)})`);
+    }
+  }
+  const scored = clauses.length <= 1 ? (clauses[0] ?? "worth a second look") : `${clauses.slice(0, -1).join(", ")}; and as ${clauses[clauses.length - 1]}`;
+  const read = input.sawConventions
+    ? "It read the old and new text of this edit and the CLAUDE.md lines it was given"
+    : "It read the old and new text of this edit";
+  return (
+    `[jev] The ${input.tool} call above (${input.subject}) was scored by the jev classifier as ${scored}. ` +
+    `${read}, not the rest of the file, its callers, or the tests.`
+  );
+}
+
+/** The tripwire text for the two block-grade lint findings. Declarative. */
+export function lintTripText(input: {
+  id: string;
+  tool: string;
+  finding: "hardcodes_secret" | "removes_test";
+  p: number;
+}): string {
+  const secret = input.finding === "hardcodes_secret";
+  const scored = secret
+    ? `containing a hardcoded credential written as a literal (p=${p(input.p)})`
+    : `removing or disabling a test or assertion (p=${p(input.p)}) that the request was not read as asking for`;
+  const caveat = secret ? "an example value reads the same as a real one" : "a rewritten test can read as a removed one";
+  const narrower = secret
+    ? "A version that reads the value from the environment needs no marker."
+    : "A narrower edit that keeps the assertion needs no marker.";
+  return (
+    `[jev] tripwire ${input.id}: this ${input.tool} call was not run. The jev classifier scored the new text as ${scored}. ` +
+    `The classifier reads the edit literally and can be wrong; ${caveat}. The call is re-runnable unchanged after a ` +
+    `separate Bash call \`true # jev:intended ${input.id}: <the sentence of the user's request that requires this exact edit>\`; ` +
+    `it then passes this hook without further judgment and Claude Code's own permission rules still apply. ${narrower} ` +
+    `Marker text is recorded and shown to the user by /jev:why.`
+  );
+}
+
 export function contradictionNoteText(input: { tool: string; p: number }): string {
   return (
     `[jev] This ${input.tool} result was scored as stating something that conflicts with an assumption in ` +
