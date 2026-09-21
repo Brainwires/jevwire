@@ -25,6 +25,7 @@ import { gateOutcome, bands, NOTE_DEDUPE_TTL_MS } from "../advisory.js";
 import { runGateAction, type GateAction, type GateContext, type GateRequest } from "../../tools/gate-action-core.js";
 import { FILE_TOOLS, prefilter, SPAWN_TOOLS, structuredAction } from "../prefilter.js";
 import { handleLint } from "./lint.js";
+import { handleCommit, isGitCommit } from "./commit.js";
 import { compactJson, redact, redactAndClamp } from "../redact.js";
 import { modelCost, MAX_PROMPT_CHARS } from "../store.js";
 import type { DecisionRecord } from "../store.js";
@@ -245,6 +246,17 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
     });
     return tripOutput(channel, text);
+  }
+
+  // A `git commit` with nothing open against it: the commit-time lint. It runs
+  // here, after the open-trip machinery, so an affirmed commit re-runs through
+  // the same reissue path as any Bash trip.
+  if (
+    toolName === "Bash" &&
+    config.lint !== "off" &&
+    isGitCommit(typeof action.command === "string" ? action.command : undefined)
+  ) {
+    return handleCommit(input, deps, action.command as string, base, fp, now);
   }
 
   // Row 5: a marker on a call that was never tripped. It has already been

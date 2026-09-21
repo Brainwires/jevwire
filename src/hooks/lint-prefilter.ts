@@ -131,7 +131,7 @@ export function entropyBitsPerChar(text: string): number {
   return bits;
 }
 
-function looksLikeSecretLiteral(line: string): boolean {
+export function looksLikeSecretLiteral(line: string): boolean {
   if (SECRET_KEYED.test(line) || BEGIN_BLOCK.test(line)) return true;
   for (const match of line.matchAll(QUOTED)) {
     const value = match[1] as string;

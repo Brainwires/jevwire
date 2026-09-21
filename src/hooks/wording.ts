@@ -383,6 +383,40 @@ export function lintTripText(input: {
   );
 }
 
+/** The advisory note for a git commit that bundles several changes, or whose message misses part of the diff. */
+export function commitScopeNoteText(input: {
+  files: number;
+  added: number;
+  deleted: number;
+  scope_p3?: number | undefined;
+  message_describes?: number | undefined;
+}): string {
+  // Called only when scope or message (or both) fired. Scope leads when present.
+  const scored =
+    input.scope_p3 !== undefined
+      ? `bundling several independent changes (p=${p(input.scope_p3)})`
+      : `not fully described by its message (p(describes)=${p(input.message_describes ?? 0)})`;
+  const messageClause =
+    input.scope_p3 !== undefined && input.message_describes !== undefined
+      ? ` The commit message was scored as not describing it (p(describes)=${p(input.message_describes)}).`
+      : "";
+  return (
+    `[jev] The staged diff behind this git commit (${input.files} files, +${input.added}/-${input.deleted}) ` +
+    `was scored by the jev classifier as ${scored}.${messageClause} It read the diff and the message, not the branch history.`
+  );
+}
+
+/** The tripwire for a secret written straight into a staged diff. */
+export function commitSecretTripText(input: { id: string; p: number }): string {
+  return (
+    `[jev] tripwire ${input.id}: this git commit was not run. The jev classifier scored the staged diff as ` +
+    `adding a hardcoded credential (p=${p(input.p)}). The classifier reads literally and can be wrong. It is ` +
+    `re-runnable unchanged with \`# jev:intended <the sentence of the user's request that requires committing ` +
+    `this literal>\` on its last line; it then passes this hook and Claude Code's own permission rules still ` +
+    `apply. Marker text is recorded and shown to the user by /jev:why.`
+  );
+}
+
 export function contradictionNoteText(input: { tool: string; p: number }): string {
   return (
     `[jev] This ${input.tool} result was scored as stating something that conflicts with an assumption in ` +
