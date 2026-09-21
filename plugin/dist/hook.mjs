@@ -543,11 +543,11 @@ function resolveDataDir(env = process.env, scriptPath = process.argv[1]) {
 function installIdFromScriptPath(scriptPath) {
   if (scriptPath === void 0) return void 0;
   const parts = scriptPath.replace(/\\/g, "/").split("/");
-  const cache = parts.lastIndexOf("cache");
-  if (cache < 1 || parts[cache - 1] !== "plugins") return void 0;
-  const marketplace = parts[cache + 1];
-  const plugin = parts[cache + 2];
-  if (!marketplace || !plugin || parts.length < cache + 5) return void 0;
+  const cache2 = parts.lastIndexOf("cache");
+  if (cache2 < 1 || parts[cache2 - 1] !== "plugins") return void 0;
+  const marketplace = parts[cache2 + 1];
+  const plugin = parts[cache2 + 2];
+  if (!marketplace || !plugin || parts.length < cache2 + 5) return void 0;
   return `${plugin}@${marketplace}`.replace(/[^A-Za-z0-9_-]/g, "-");
 }
 function readLint(env, warnings) {
@@ -841,7 +841,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.6.0";
+var HOOK_VERSION = "0.6.1";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
@@ -1374,7 +1374,7 @@ function liveTrips(trips, now) {
 function readTrip(raw) {
   if (typeof raw !== "object" || raw === null) return void 0;
   const value = raw;
-  if (typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.tool_name !== "string" || typeof value.ts !== "number" || !Number.isFinite(value.ts) || value.source !== "pattern" && value.source !== "model") {
+  if (typeof value.id !== "string" || typeof value.fingerprint !== "string" || typeof value.tool_name !== "string" || typeof value.ts !== "number" || !Number.isFinite(value.ts) || value.source !== "pattern" && value.source !== "model" && value.source !== "lint" && value.source !== "commit") {
     return void 0;
   }
   const trip = {
@@ -3293,6 +3293,38 @@ function claimsBlockText(items) {
   const provenance = anyContradicted ? "The file and identifier checks ran in code; the diff check is the jev classifier reading `git diff HEAD`, which shows changes and not the resulting code." : "The file and identifier checks ran in code, against the project and `git diff HEAD`.";
   return `[jev] Your final message names ${items.length} thing${items.length === 1 ? "" : "s"} the workspace does not show: ${list}. ${provenance} The message can be corrected, or the missing change made.`;
 }
+var LINT_CLAUSES = [
+  { id: "removes_test", text: (f) => `removing or disabling a test or assertion (p=${p(f.p)}), which the request was read as asking for` },
+  { id: "swallows_exception", text: (f) => `adding a handler that catches an error and discards it (p=${p(f.p)})` },
+  { id: "changes_public_signature", text: (f) => `changing an exported signature that other files may depend on (p=${p(f.p)})` },
+  { id: "adds_suppression", text: (f) => `adding a new type or lint suppression (p=${p(f.p)})` },
+  { id: "hardcodes_url_or_path", text: (f) => `writing a literal URL or absolute path into code (p=${p(f.p)})` },
+  { id: "leaves_placeholder", text: (f) => `leaving a placeholder where the surrounding code needs an implementation (p=${p(f.p)})` }
+];
+function lintNoteText(input) {
+  const clauses = [];
+  for (const clause of LINT_CLAUSES) {
+    const finding = input.findings.find((f) => f.id === clause.id);
+    if (finding !== void 0) clauses.push(clause.text(finding));
+    if (clauses.length >= 3) break;
+  }
+  for (const finding of input.findings) {
+    if (clauses.length >= 3) break;
+    if (finding.id.startsWith("conv_") && finding.convention !== void 0) {
+      clauses.push(`going against the CLAUDE.md line "${finding.convention.slice(0, 100)}" (p=${p(finding.p)})`);
+    }
+  }
+  const scored = clauses.length <= 1 ? clauses[0] ?? "worth a second look" : `${clauses.slice(0, -1).join(", ")}; and as ${clauses[clauses.length - 1]}`;
+  const read2 = input.sawConventions ? "It read the old and new text of this edit and the CLAUDE.md lines it was given" : "It read the old and new text of this edit";
+  return `[jev] The ${input.tool} call above (${input.subject}) was scored by the jev classifier as ${scored}. ${read2}, not the rest of the file, its callers, or the tests.`;
+}
+function lintTripText(input) {
+  const secret = input.finding === "hardcodes_secret";
+  const scored = secret ? `containing a hardcoded credential written as a literal (p=${p(input.p)})` : `removing or disabling a test or assertion (p=${p(input.p)}) that the request was not read as asking for`;
+  const caveat = secret ? "an example value reads the same as a real one" : "a rewritten test can read as a removed one";
+  const narrower = secret ? "A version that reads the value from the environment needs no marker." : "A narrower edit that keeps the assertion needs no marker.";
+  return `[jev] tripwire ${input.id}: this ${input.tool} call was not run. The jev classifier scored the new text as ${scored}. The classifier reads the edit literally and can be wrong; ${caveat}. The call is re-runnable unchanged after a separate Bash call \`true # jev:intended ${input.id}: <the sentence of the user's request that requires this exact edit>\`; it then passes this hook without further judgment and Claude Code's own permission rules still apply. ${narrower} Marker text is recorded and shown to the user by /jev:why.`;
+}
 function contradictionNoteText(input) {
   return `[jev] This ${input.tool} result was scored as stating something that conflicts with an assumption in the request (contradicts_premise=${p(input.p)}) by the jev classifier: the text and the last user prompt disagree about a fact. Source: jev classifier, literal reading of the result and the prompt only.`;
 }
@@ -4119,6 +4151,738 @@ function gateOutcome(input) {
   return { outcome: "silent", firm: [], suppressed: "uncertain" };
 }
 
+// src/hooks/conventions.ts
+import { statSync as statSync4 } from "node:fs";
+import { join as join4 } from "node:path";
+
+// src/hooks/workspace.ts
+import { execFile } from "node:child_process";
+import { existsSync as existsSync2, readFileSync as readFileSync3, realpathSync, statSync as statSync3 } from "node:fs";
+import { isAbsolute as isAbsolute2, resolve as resolve2, sep as sep2 } from "node:path";
+import { promisify } from "node:util";
+var run = promisify(execFile);
+var WORKSPACE_LIMITS = {
+  maxFileBytes: 512 * 1024,
+  gitTimeoutMs: 600,
+  maxDiffChars: 4e4
+};
+var BINARY_SNIFF_BYTES = 8192;
+function insideCwd(cwd, rel) {
+  let root;
+  try {
+    root = realpathSync(resolve2(cwd));
+  } catch {
+    return { ok: false, abs: "" };
+  }
+  const abs = isAbsolute2(rel) ? resolve2(rel) : resolve2(root, rel);
+  const contains = (path) => path === root || path.startsWith(root + sep2);
+  if (!contains(abs)) return { ok: false, abs };
+  try {
+    const real = realpathSync(abs);
+    return { ok: contains(real), abs: real };
+  } catch {
+    return { ok: true, abs };
+  }
+}
+function projectFileExists(cwd, rel) {
+  if (isSensitivePath(rel)) return "refused";
+  const { ok, abs } = insideCwd(cwd, rel);
+  if (!ok) return "refused";
+  if (isSensitivePath(abs)) return "refused";
+  try {
+    return existsSync2(abs) && statSync3(abs).isFile() ? "yes" : "no";
+  } catch {
+    return "no";
+  }
+}
+function readProjectFile(cwd, rel, limits = WORKSPACE_LIMITS) {
+  if (isSensitivePath(rel)) return { kind: "refused" };
+  const { ok, abs } = insideCwd(cwd, rel);
+  if (!ok) return { kind: "refused" };
+  if (isSensitivePath(abs)) return { kind: "refused" };
+  let stat;
+  try {
+    stat = statSync3(abs);
+  } catch {
+    return { kind: "missing" };
+  }
+  if (!stat.isFile()) return { kind: "missing" };
+  if (stat.size > limits.maxFileBytes) return { kind: "too_large" };
+  let buffer;
+  try {
+    buffer = readFileSync3(abs);
+  } catch {
+    return { kind: "missing" };
+  }
+  if (buffer.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { kind: "binary" };
+  return { kind: "text", text: buffer.toString("utf8") };
+}
+function gitEnv() {
+  const env = { ...process.env };
+  delete env.GIT_EXTERNAL_DIFF;
+  env.GIT_PAGER = "";
+  env.GIT_TERMINAL_PROMPT = "0";
+  return env;
+}
+async function git(cwd, args, limits) {
+  try {
+    if (!statSync3(cwd).isDirectory()) return void 0;
+  } catch {
+    return void 0;
+  }
+  try {
+    const { stdout } = await run("git", args, {
+      cwd,
+      timeout: limits.gitTimeoutMs,
+      maxBuffer: 2 * 1024 * 1024,
+      env: gitEnv(),
+      windowsHide: true
+    });
+    return String(stdout);
+  } catch {
+    return void 0;
+  }
+}
+function clampDiff(text, max) {
+  if (text.length <= max) return { text, truncated: false };
+  const head = text.slice(0, max);
+  const boundary = Math.max(head.lastIndexOf("\ndiff --git "), head.lastIndexOf("\n@@ "));
+  const cut = boundary > 0 ? boundary : head.lastIndexOf("\n");
+  return { text: head.slice(0, cut > 0 ? cut : max), truncated: true };
+}
+async function gitDiffHead(cwd, paths, limits = WORKSPACE_LIMITS) {
+  const args = ["diff", "HEAD", "--no-color", "--no-ext-diff", "-U3"];
+  if (paths !== void 0 && paths.length > 0) args.push("--", ...paths);
+  const out = await git(cwd, args, limits);
+  return out === void 0 ? void 0 : clampDiff(out, limits.maxDiffChars);
+}
+async function gitNameStatus(cwd, limits = WORKSPACE_LIMITS) {
+  const out = await git(cwd, ["diff", "HEAD", "--name-status", "--no-color"], limits);
+  const map = /* @__PURE__ */ new Map();
+  if (out === void 0) return map;
+  for (const line of out.split("\n")) {
+    const parts = line.split("	");
+    const code = parts[0]?.trim();
+    if (code === void 0 || code === "") continue;
+    const letter = code[0];
+    if (letter !== "A" && letter !== "M" && letter !== "D" && letter !== "R") continue;
+    const path = letter === "R" ? parts[2] : parts[1];
+    if (path !== void 0 && path !== "") map.set(path, letter);
+  }
+  return map;
+}
+
+// src/hooks/conventions.ts
+var MAX_CONVENTIONS = 12;
+var MAX_CONVENTION_CHARS = 240;
+var BULLET = /^\s*(?:[-*+]|\d+[.)])\s+/;
+var RULE_SIGNAL = /\b(always|never|must|should|do not|don't|avoid|prefer|use|only|no)\b/i;
+var CODE_SIGNAL = /\b(import|export|test|type|function|class|file|module|lint|format|commit|log|error|async|await)\b/;
+var SECTION_HEADING = /^#{1,3}\s*(conventions?|code style|coding|style|rules|guidelines)/i;
+function stripMarkdown(line) {
+  return line.replace(BULLET, "").replace(/\*\*|__/g, "").replace(/^\s+|\s+$/g, "");
+}
+function extractConventions(text, max = MAX_CONVENTIONS) {
+  const lines = text.split("\n");
+  const underHeading = [];
+  const rest = [];
+  let inSection = false;
+  for (const raw of lines) {
+    if (/^#{1,6}\s+/.test(raw)) {
+      inSection = SECTION_HEADING.test(raw);
+      continue;
+    }
+    if (!BULLET.test(raw)) continue;
+    const line = stripMarkdown(raw);
+    if (line.length === 0 || line.length > MAX_CONVENTION_CHARS) continue;
+    const hasCode = line.includes("`") || CODE_SIGNAL.test(line);
+    if (!RULE_SIGNAL.test(line) || !hasCode) continue;
+    (inSection ? underHeading : rest).push(line);
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const ordered = [];
+  for (const line of [...underHeading, ...rest]) {
+    if (seen.has(line)) continue;
+    seen.add(line);
+    ordered.push(line);
+    if (ordered.length >= max) break;
+  }
+  return ordered;
+}
+var cache = /* @__PURE__ */ new Map();
+function mtimeKey(cwd) {
+  const paths = [join4(cwd, "CLAUDE.md"), join4(cwd, ".claude", "CLAUDE.md")];
+  const key = paths.map((path) => {
+    try {
+      return String(statSync4(path).mtimeMs);
+    } catch {
+      return "0";
+    }
+  }).join(":");
+  return { key, paths };
+}
+function readProjectConventions(cwd) {
+  const { key, paths } = mtimeKey(cwd);
+  const cached = cache.get(cwd);
+  if (cached !== void 0 && cached.mtimeKey === key) return cached.conventions;
+  const merged = [];
+  for (const path of paths) {
+    const rel = path.slice(cwd.length + 1);
+    const read2 = readProjectFile(cwd, rel);
+    if (read2.kind === "text") merged.push(...extractConventions(read2.text, MAX_CONVENTIONS));
+  }
+  const seen = /* @__PURE__ */ new Set();
+  const conventions = merged.filter((line) => seen.has(line) ? false : (seen.add(line), true)).slice(0, MAX_CONVENTIONS);
+  cache.set(cwd, { mtimeKey: key, conventions });
+  return conventions;
+}
+
+// src/hooks/lint-prefilter.ts
+var LINT_QUESTION_IDS = [
+  "removes_test",
+  "swallows_exception",
+  "hardcodes_secret",
+  "hardcodes_url_or_path",
+  "adds_suppression",
+  "changes_public_signature",
+  "leaves_placeholder"
+];
+var MAX_LINT_CHARS = 4e4;
+var NON_CODE = /* @__PURE__ */ new Set([
+  "md",
+  "mdx",
+  "txt",
+  "rst",
+  "adoc",
+  "svg",
+  "png",
+  "jpg",
+  "jpeg",
+  "gif",
+  "webp",
+  "ico",
+  "pdf",
+  "lock",
+  "map",
+  "csv",
+  "tsv"
+]);
+var CONFIG_EXTENSIONS = /* @__PURE__ */ new Set(["json", "yaml", "yml", "toml", "ini", "properties", "cfg", "conf"]);
+var LANGUAGE_BY_EXT = {
+  ts: "typescript",
+  tsx: "typescript",
+  mts: "typescript",
+  cts: "typescript",
+  js: "javascript",
+  jsx: "javascript",
+  mjs: "javascript",
+  cjs: "javascript",
+  py: "python",
+  rb: "ruby",
+  go: "go",
+  rs: "rust",
+  java: "java",
+  kt: "kotlin",
+  swift: "swift",
+  c: "c",
+  h: "c",
+  cpp: "cpp",
+  hpp: "cpp",
+  cs: "csharp",
+  php: "php",
+  sh: "shell",
+  sql: "sql",
+  vue: "vue",
+  svelte: "svelte"
+};
+var REMOVED_TEST = /\b(test|it|describe|expect|assert\w*|should|toBe|toEqual|@Test|def test_)\b/;
+var ADDED_SKIP = /\.skip\(|xit\(|xdescribe\(|@skip|pytest\.mark\.skip/;
+var CATCH = /\b(catch|except|rescue)\b/;
+var SECRET_KEYED = /\b(api[_-]?key|secret|token|passw(or)?d|private[_-]?key|authorization)\b\s*[:=]/i;
+var BEGIN_BLOCK = /-----BEGIN/;
+var URL = /https?:\/\//;
+var ABS_PATH = /(^|["'\s])\/(Users|home|etc|var|opt|tmp)\//;
+var WIN_PATH = /[A-Z]:\\\\/;
+var SUPPRESSION = /:\s*any\b|as any\b|@ts-ignore|@ts-expect-error|eslint-disable|# type: ignore|# noqa|#pragma warning disable|@SuppressWarnings|nolint/;
+var PUBLIC_SIGNATURE = /^\s*(export\s+(async\s+)?(function|const|class|interface|type|enum)|public\s+|pub\s+fn|def\s+\w+\(|func\s+[A-Z])/;
+var PLACEHOLDER = /\b(TODO|FIXME|XXX|HACK|placeholder|not implemented|NotImplemented|unimplemented!)\b|throw new Error\(["'](TODO|not implemented)|^\s*pass\s*$|^\s*\.\.\.\s*$/i;
+var QUOTED = /["'`]([A-Za-z0-9+/_\-]{20,}={0,2})["'`]/g;
+function entropyBitsPerChar(text) {
+  if (text.length === 0) return 0;
+  const counts = /* @__PURE__ */ new Map();
+  for (const ch of text) counts.set(ch, (counts.get(ch) ?? 0) + 1);
+  let bits = 0;
+  for (const count of counts.values()) {
+    const p2 = count / text.length;
+    bits -= p2 * Math.log2(p2);
+  }
+  return bits;
+}
+function looksLikeSecretLiteral(line) {
+  if (SECRET_KEYED.test(line) || BEGIN_BLOCK.test(line)) return true;
+  for (const match of line.matchAll(QUOTED)) {
+    const value = match[1];
+    if (entropyBitsPerChar(value) > 3.5) return true;
+  }
+  return false;
+}
+function extensionOf(path) {
+  const base = path.replace(/\\/g, "/").split("/").pop() ?? "";
+  const dot = base.lastIndexOf(".");
+  return dot > 0 ? base.slice(dot + 1).toLowerCase() : "";
+}
+function lineDiff(old, next) {
+  const oldLines = old.split("\n");
+  const newLines = next.split("\n");
+  const oldSet = new Set(oldLines.map((l) => l.trim()));
+  const newSet = new Set(newLines.map((l) => l.trim()));
+  const removed = oldLines.filter((l) => l.trim() !== "" && !newSet.has(l.trim()));
+  const added = newLines.filter((l) => l.trim() !== "" && !oldSet.has(l.trim()));
+  return { removed, added };
+}
+function normalizeWhitespace(text) {
+  return text.replace(/\s+/g, " ").trim();
+}
+function isPureRename(old, next) {
+  if (old === next) return false;
+  const oldTokens = old.match(/[A-Za-z_$][\w$]*/g) ?? [];
+  const newTokens = next.match(/[A-Za-z_$][\w$]*/g) ?? [];
+  if (oldTokens.length !== newTokens.length || oldTokens.length === 0) return false;
+  let from;
+  let to;
+  for (let i = 0; i < oldTokens.length; i += 1) {
+    const a = oldTokens[i];
+    const b = newTokens[i];
+    if (a === b) continue;
+    if (from === void 0) {
+      from = a;
+      to = b;
+    } else if (a !== from || b !== to) {
+      return false;
+    }
+  }
+  if (from === void 0 || to === void 0) return false;
+  return normalizeWhitespace(old.split(from).join(to)) === normalizeWhitespace(next);
+}
+function gatesFor(removed, added, configOnly) {
+  const removedText = removed.join("\n");
+  const addedText = added.join("\n");
+  const ask = [];
+  const push = (id) => {
+    if (!ask.includes(id)) ask.push(id);
+  };
+  if (added.some(looksLikeSecretLiteral)) push("hardcodes_secret");
+  if (URL.test(addedText) || ABS_PATH.test(addedText) || WIN_PATH.test(addedText)) push("hardcodes_url_or_path");
+  if (configOnly) return ask;
+  if (REMOVED_TEST.test(removedText) || ADDED_SKIP.test(addedText)) push("removes_test");
+  if (CATCH.test(addedText)) push("swallows_exception");
+  if (SUPPRESSION.test(addedText)) push("adds_suppression");
+  if (added.some((l) => PUBLIC_SIGNATURE.test(l)) || removed.some((l) => PUBLIC_SIGNATURE.test(l)))
+    push("changes_public_signature");
+  if (PLACEHOLDER.test(addedText)) push("leaves_placeholder");
+  return ask;
+}
+function lintPrefilter(input, hasConventions = false) {
+  const old = input.old ?? (input.edits ? input.edits.map((e) => e.old_string).join("\n") : "");
+  const next = input.edits ? input.edits.map((e) => e.new_string).join("\n") : input.new;
+  if (next.trim() === "" && old.trim() === "") return { kind: "skip", reason: "empty" };
+  if (old.length + next.length > MAX_LINT_CHARS) return { kind: "skip", reason: "too-large" };
+  const ext = extensionOf(input.file_path);
+  if (NON_CODE.has(ext)) return { kind: "skip", reason: "non-code-file" };
+  const { removed, added } = lineDiff(old, next);
+  const configOnly = CONFIG_EXTENSIONS.has(ext) || /(^|\.)env($|\.)/i.test(input.file_path.split("/").pop() ?? "");
+  const ask = gatesFor(removed, added, configOnly);
+  if (ask.length === 0) {
+    if (normalizeWhitespace(old) === normalizeWhitespace(next)) return { kind: "skip", reason: "whitespace-only" };
+    if (isPureRename(old, next)) return { kind: "skip", reason: "pure-rename" };
+    if (!hasConventions) return { kind: "skip", reason: "no-gate" };
+  }
+  const language = LANGUAGE_BY_EXT[ext] ?? (configOnly ? "config" : ext || "text");
+  return {
+    kind: "judge",
+    language,
+    removed,
+    added,
+    ask,
+    reason: ask.length > 0 ? `gates: ${ask.join(", ")}` : "conventions only"
+  };
+}
+
+// src/hooks/lint-core.ts
+var MAX_LINT_TEXT = 12e3;
+var MAX_LINT_LINES = 120;
+function clip(text, max = MAX_LINT_TEXT) {
+  if (text.length <= max) return text;
+  const head = Math.floor(max * 2 / 3);
+  return `${text.slice(0, head)}
+\u2026
+${text.slice(text.length - (max - head))}`;
+}
+function lintState(input) {
+  const change = { kind: input.change.kind };
+  if (input.change.old_string !== void 0) change.old_string = clip(input.change.old_string);
+  if (input.change.new_string !== void 0) change.new_string = clip(input.change.new_string);
+  if (input.change.content !== void 0) change.content = clip(input.change.content);
+  const state = {
+    file_path: input.file_path,
+    language: input.language,
+    change,
+    removed_lines: input.removed_lines.slice(0, MAX_LINT_LINES),
+    added_lines: input.added_lines.slice(0, MAX_LINT_LINES),
+    conventions: input.conventions
+  };
+  if (input.user_request !== void 0) state.user_request = input.user_request;
+  return state;
+}
+var QUESTIONS3 = {
+  removes_test: {
+    type: "noul",
+    instructions: {
+      question: "Does the change remove or disable a test, a test case, or an assertion?",
+      inspect: ["removed_lines", "added_lines"],
+      focus: "Compare what was asserted before with what is asserted after."
+    },
+    criteria: {
+      true: {
+        what: "A test, test case, expectation or assertion that existed in `old_string` is gone from `new_string`, or is skipped, commented out, or made to pass unconditionally.",
+        examples: ["an `expect(...)` line deleted", "`it(` changed to `it.skip(`", "an assertion replaced by a log statement"]
+      },
+      false: {
+        what: "Every test and assertion that existed is still present and still checks the same thing; tests may have been added, renamed, or moved without weakening.",
+        not_for: "renaming a test, reordering assertions, updating an expected value alongside the code it tests"
+      }
+    }
+  },
+  swallows_exception: {
+    type: "noul",
+    instructions: {
+      question: "Does the change add a handler that catches an error and then discards it?",
+      inspect: "added_lines"
+    },
+    criteria: {
+      true: {
+        what: "A new catch/except/rescue block whose body neither rethrows, returns an error value, nor records the error somewhere a person would see it.",
+        examples: ["`catch {}`", "`except Exception: pass`", "`catch (e) { console.log(e) }` as the only handling"]
+      },
+      false: {
+        what: "No new handler, or the new handler rethrows, propagates, fails the operation, or reports the error.",
+        not_for: "a handler that maps the error to a typed result or a user-facing message"
+      }
+    }
+  },
+  hardcodes_secret: {
+    type: "noul",
+    instructions: {
+      question: "Does the change write a real credential into the code as a literal?",
+      inspect: "added_lines"
+    },
+    criteria: {
+      true: {
+        what: "An API key, access token, password, private key or signing secret appears as a literal string value in `added_lines`.",
+        examples: ['`apiKey = "sk-live-\u2026"`', "a `-----BEGIN PRIVATE KEY-----` block", "`Authorization: Bearer eyJ\u2026` with a full token"]
+      },
+      false: {
+        what: "The value is read from the environment, a config file or a secret store, or the literal is plainly a placeholder or example.",
+        examples: ["`process.env.API_KEY`", '`"your-key-here"`', '`"<token>"`', "a test fixture named as fake"]
+      }
+    }
+  },
+  hardcodes_url_or_path: {
+    type: "noul",
+    instructions: {
+      question: "Does the change write an environment-specific URL or absolute filesystem path into code as a literal?",
+      inspect: "added_lines"
+    },
+    criteria: {
+      true: {
+        what: "A literal URL naming a specific host, or an absolute path under a home directory or system directory, is used by the code rather than read from configuration.",
+        examples: ['`fetch("https://api.internal.example.com/v2")`', '`open("/Users/dana/data.csv")`']
+      },
+      false: {
+        what: "The value comes from configuration or an argument, or the literal is a public constant such as a schema URL, a documentation link in a comment, or a path inside the project.",
+        not_for: "URLs in comments or docs, `localhost` in tests, relative paths"
+      }
+    }
+  },
+  adds_suppression: {
+    type: "noul",
+    instructions: {
+      question: "Does the change add a type or lint suppression that did not exist before?",
+      inspect: ["added_lines", "removed_lines"]
+    },
+    criteria: {
+      true: {
+        what: "A new `any` type, `@ts-ignore`, `@ts-expect-error`, `eslint-disable`, `# type: ignore`, `# noqa` or equivalent that silences a check on code in this change."
+      },
+      false: {
+        what: "No new suppression; an existing one moved; the word appears in a comment or string; or the suppression carries a justification comment on the same or previous line.",
+        not_for: "`any` in prose or in a type test, `@ts-expect-error` with a reason"
+      }
+    }
+  },
+  changes_public_signature: {
+    type: "noul",
+    instructions: {
+      question: "Does the change alter the parameters, return type or name of something exported from this file?",
+      inspect: ["removed_lines", "added_lines"]
+    },
+    criteria: {
+      true: {
+        what: "An exported function, method, class, type or constant has a different name, parameter list, parameter types or return type after the change, or is no longer exported.",
+        examples: ["`export function run(a)` becomes `export function run(a, b)`", "an exported type loses a field"]
+      },
+      false: {
+        what: "Exported signatures are unchanged; only bodies, private helpers, comments or new exports changed.",
+        not_for: "adding a new export, changing a non-exported function"
+      }
+    }
+  },
+  leaves_placeholder: {
+    type: "noul",
+    instructions: {
+      question: "Does the change leave a placeholder where working code was asked for?",
+      inspect: "added_lines"
+    },
+    criteria: {
+      true: {
+        what: "The added code contains a TODO, FIXME, stub, `not implemented` error, bare `pass`, or ellipsis standing in for logic that the surrounding code needs.",
+        examples: ['`throw new Error("not implemented")` in a function that is called', "`// TODO: handle errors` with no handling"]
+      },
+      false: {
+        what: "No placeholder, or the marker is in a comment describing future work that the change does not depend on.",
+        not_for: "a TODO in documentation, a deliberate `pass` in an abstract method"
+      }
+    }
+  }
+};
+var REQUESTED_REMOVAL = {
+  type: "noul",
+  instructions: "Does `user_request` ask for a test or an assertion to be removed, skipped or changed?",
+  criteria: {
+    true: "`user_request` names a test, test file or assertion and asks for it to be deleted, skipped, disabled or rewritten.",
+    false: "`user_request` does not mention removing or changing tests."
+  }
+};
+function conventionQuestion(index) {
+  return {
+    type: "noul",
+    instructions: {
+      question: `Does the change go against \`conventions[${index}]\`?`,
+      inspect: ["added_lines"],
+      focus: `Judge only what \`conventions[${index}]\` literally says, against the added lines.`
+    },
+    criteria: {
+      true: `\`added_lines\` do something \`conventions[${index}]\` says not to do, or omit something it says to always do.`,
+      false: `\`conventions[${index}]\` is followed, or it is about something this change does not touch.`
+    }
+  };
+}
+function lintQuestions(ask, conventions, hasRequest) {
+  const questions = {};
+  for (const id of ask) questions[id] = QUESTIONS3[id];
+  if (ask.includes("removes_test") && hasRequest) questions.requested_removal = REQUESTED_REMOVAL;
+  conventions.forEach((_convention, index) => {
+    questions[`conv_${index}`] = conventionQuestion(index);
+  });
+  return questions;
+}
+function lintOutcome(input) {
+  const { signals, thresholds } = input;
+  const firm = (id) => lean(signals[id] ?? 0, thresholds.auto) === "yes";
+  const findings = [];
+  for (const id of LINT_QUESTION_IDS) {
+    if (firm(id)) findings.push({ id, p: signals[id] ?? 0 });
+  }
+  input.conventions.forEach((convention, index) => {
+    if (firm(`conv_${index}`)) findings.push({ id: `conv_${index}`, p: signals[`conv_${index}`] ?? 0, convention });
+  });
+  if (input.level === "off") return { outcome: "silent", findings: [], suppressed: "level" };
+  if (firm("hardcodes_secret")) {
+    return { outcome: "trip", findings, trip: "hardcodes_secret" };
+  }
+  if (firm("removes_test")) {
+    if (!firm("requested_removal")) return { outcome: "trip", findings, trip: "removes_test" };
+    return note(findings, input, "removes_test-requested");
+  }
+  if (findings.length === 0) return { outcome: "silent", findings, suppressed: "uncertain" };
+  if (input.level === "tripwire") return { outcome: "silent", findings, suppressed: "level" };
+  return note(findings, input);
+}
+function note(findings, input, _reason) {
+  if (input.duplicate) return { outcome: "silent", findings, suppressed: "dup" };
+  if (input.notesThisPrompt >= input.cap) return { outcome: "silent", findings, suppressed: "cap" };
+  return { outcome: "note", findings };
+}
+async function runLint(model, state, questions, signal2) {
+  const request2 = { state, questions };
+  if (signal2 !== void 0) request2.signal = signal2;
+  const result = await model.evaluate(request2);
+  const answers = result.answers;
+  const signals = {};
+  for (const id of Object.keys(questions)) {
+    const answer = answers[id];
+    signals[id] = answer !== void 0 && answer.type === "noul" && typeof answer.noul === "number" ? answer.noul : 0;
+  }
+  return {
+    signals,
+    usage: result.usage,
+    model: result.model,
+    latency_ms: result.latency_ms,
+    ...result.memo === true ? { memo: true } : {}
+  };
+}
+
+// src/hooks/handlers/lint.ts
+var MAX_MULTI_EDITS = 8;
+var MAX_EDIT_CHARS = 4e3;
+function pathOf(toolInput) {
+  for (const key of ["file_path", "notebook_path", "path"]) {
+    const value = toolInput[key];
+    if (typeof value === "string" && value !== "") return value;
+  }
+  return void 0;
+}
+function relativize2(cwd, path) {
+  return path.startsWith(cwd) ? path.slice(cwd.length + 1) : path;
+}
+function editInputOf(toolName, toolInput, cwd) {
+  const path = pathOf(toolInput);
+  if (path === void 0) return void 0;
+  const str2 = (key) => typeof toolInput[key] === "string" ? toolInput[key] : void 0;
+  if (toolName === "Edit" || toolName === "Update") {
+    return { tool: toolName, file_path: path, old: str2("old_string") ?? "", new: str2("new_string") ?? "" };
+  }
+  if (toolName === "MultiEdit") {
+    const raw = Array.isArray(toolInput.edits) ? toolInput.edits : [];
+    const edits = raw.slice(0, MAX_MULTI_EDITS).map((e) => {
+      const edit = e ?? {};
+      return {
+        old_string: String(edit.old_string ?? "").slice(0, MAX_EDIT_CHARS),
+        new_string: String(edit.new_string ?? "").slice(0, MAX_EDIT_CHARS)
+      };
+    });
+    return { tool: toolName, file_path: path, new: "", edits };
+  }
+  const content = str2("content") ?? str2("new_source") ?? "";
+  const read2 = readProjectFile(cwd, relativize2(cwd, path));
+  const old = read2.kind === "text" ? read2.text : "";
+  return { tool: toolName, file_path: path, old, new: content };
+}
+async function handleLint(input, deps, action, base, now) {
+  const { config, store } = deps;
+  const sessionId = input.session_id ?? "unknown";
+  const toolName = input.tool_name ?? "";
+  const cwd = input.cwd ?? process.cwd();
+  const editInput = editInputOf(toolName, action, cwd);
+  if (editInput === void 0) return void 0;
+  const conventions = config.lintConventions && config.lint === "advisory" ? readProjectConventions(cwd) : [];
+  const pre = lintPrefilter(editInput, conventions.length > 0);
+  if (pre.kind === "skip") {
+    if (pre.reason === "too-large" || Math.floor(now / 100) % 10 === 0) {
+      store.append({ ...base, kind: "lint", decision: "lint-skip", prefilter: pre.reason });
+    }
+    return void 0;
+  }
+  const fp = fingerprint(toolName, action);
+  const open = store.findTripByFingerprint(sessionId, fp, now);
+  if (open !== void 0) {
+    if (open.affirmation !== void 0) {
+      store.closeTrip(sessionId, open.id, now);
+      store.append({
+        ...base,
+        kind: "lint",
+        decision: "reissue",
+        trip_id: open.id,
+        fingerprint: fp,
+        source: open.source,
+        affirmation: redactAndClamp(open.affirmation, MAX_REASON_CHARS)
+      });
+      if (input.tool_use_id !== void 0) {
+        store.rememberReissue(sessionId, { tool_use_id: input.tool_use_id, ts: now, tool_name: toolName, trip_id: open.id });
+      }
+      return void 0;
+    }
+    const attempt = store.repeatTrip(sessionId, open.id, now);
+    const channel = tripChannel(config.askOnTrip, input.permission_mode);
+    const text = tripRepeatText({ id: open.id, attempt, seconds: (now - open.ts) / 1e3 });
+    store.append({ ...base, kind: "lint", decision: "trip-repeat", trip_id: open.id, fingerprint: fp, source: open.source, channel, emitted: redactAndClamp(text, MAX_EMITTED_CHARS) });
+    return tripOutput(channel, text);
+  }
+  if (deps.model === null) return void 0;
+  const session = store.readSession(sessionId);
+  const hasRequest = session.prompts.length > 0;
+  const judge = {
+    file_path: relativize2(cwd, editInput.file_path),
+    language: pre.language,
+    change: editInput.edits !== void 0 ? { kind: "multi_edit", content: editInput.edits.map((e) => e.new_string).join("\n") } : toolName === "Write" || toolName === "NotebookEdit" ? { kind: "write", content: editInput.new, old_string: editInput.old ?? "" } : { kind: "edit", old_string: editInput.old ?? "", new_string: editInput.new },
+    removed_lines: pre.removed,
+    added_lines: pre.added,
+    conventions,
+    ...hasRequest ? { user_request: requestText(session.prompts, MAX_PROMPT_CHARS) } : {}
+  };
+  const questions = lintQuestions(pre.ask, conventions, hasRequest);
+  const fileField = redact(judge.file_path);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), config.timeoutMs);
+  try {
+    const result = await runLint(deps.model, lintState(judge), questions, controller.signal);
+    const duplicate = store.wasNoted(sessionId, fp, NOTE_DEDUPE_TTL_MS, now);
+    const outcome = lintOutcome({
+      signals: result.signals,
+      conventions,
+      thresholds: { auto: config.autoThreshold, review: config.reviewThreshold },
+      duplicate,
+      notesThisPrompt: session.notes_this_prompt ?? 0,
+      cap: MAX_NOTES_PER_PROMPT,
+      level: config.lint
+    });
+    const record = {
+      ...base,
+      kind: "lint",
+      file: fileField,
+      signals: result.signals,
+      findings: outcome.findings.map((f) => f.convention !== void 0 ? `conv:${f.convention.slice(0, 60)}` : f.id),
+      ...modelCost(result)
+    };
+    if (outcome.outcome === "trip" && outcome.trip !== void 0) {
+      const id = tripIdOf(fp);
+      const channel = tripChannel(config.askOnTrip, input.permission_mode);
+      const p2 = result.signals[outcome.trip] ?? 0;
+      const text = lintTripText({ id, tool: toolName, finding: outcome.trip, p: p2 });
+      const trip = {
+        id,
+        fingerprint: fp,
+        tool_name: toolName,
+        ts: now,
+        source: "lint",
+        reason: redactAndClamp(outcome.trip, MAX_REASON_CHARS),
+        denies: 1
+      };
+      store.openTrip(sessionId, trip, now);
+      store.append({ ...record, decision: "lint-trip", trip_id: id, source: "lint", channel, emitted: redactAndClamp(text, MAX_EMITTED_CHARS) });
+      return tripOutput(channel, text);
+    }
+    if (outcome.outcome === "note") {
+      const text = lintNoteText({
+        tool: toolName,
+        subject: fileField,
+        findings: outcome.findings,
+        sawConventions: conventions.length > 0
+      });
+      store.noteEmitted(sessionId, fp, now);
+      store.append({ ...record, decision: "lint-note", channel: "note", emitted: redactAndClamp(text, MAX_EMITTED_CHARS) });
+      return noteOutput(text);
+    }
+    store.append({ ...record, decision: `lint-silent-${outcome.suppressed ?? "uncertain"}` });
+    return void 0;
+  } catch (error) {
+    store.append({ ...base, kind: "lint", decision: "lint-error", file: fileField, error: error instanceof Error ? `${error.name}: ${error.message}` : String(error) });
+    return void 0;
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
 // src/hooks/handlers/pre-tool-use.ts
 var MAX_ACTION_CHARS = 4e3;
 var ACTION_TEXT_FIELDS = ["command", "content_head", "old_string", "new_string", "text"];
@@ -4218,7 +4982,12 @@ async function handlePreToolUse(input, deps) {
     }
     return void 0;
   }
-  if (verdict.kind === "skip") return void 0;
+  if (verdict.kind === "skip") {
+    if (verdict.writesInProject === true && FILE_TOOLS.has(toolName) && config.lint !== "off") {
+      return handleLint(input, deps, action, base, now);
+    }
+    return void 0;
+  }
   const fp = fingerprint(toolName, action);
   const open = store.findTripByFingerprint(sessionId, fp, now);
   if (marker?.short === true) {
@@ -4814,123 +5583,6 @@ function stopClaimsPolicy(stage1, verified, auto) {
   return { block: items.length > 0, items, counts };
 }
 
-// src/hooks/workspace.ts
-import { execFile } from "node:child_process";
-import { existsSync as existsSync2, readFileSync as readFileSync3, realpathSync, statSync as statSync3 } from "node:fs";
-import { isAbsolute as isAbsolute2, resolve as resolve2, sep as sep2 } from "node:path";
-import { promisify } from "node:util";
-var run = promisify(execFile);
-var WORKSPACE_LIMITS = {
-  maxFileBytes: 512 * 1024,
-  gitTimeoutMs: 600,
-  maxDiffChars: 4e4
-};
-var BINARY_SNIFF_BYTES = 8192;
-function insideCwd(cwd, rel) {
-  let root;
-  try {
-    root = realpathSync(resolve2(cwd));
-  } catch {
-    return { ok: false, abs: "" };
-  }
-  const abs = isAbsolute2(rel) ? resolve2(rel) : resolve2(root, rel);
-  const contains = (path) => path === root || path.startsWith(root + sep2);
-  if (!contains(abs)) return { ok: false, abs };
-  try {
-    const real = realpathSync(abs);
-    return { ok: contains(real), abs: real };
-  } catch {
-    return { ok: true, abs };
-  }
-}
-function projectFileExists(cwd, rel) {
-  if (isSensitivePath(rel)) return "refused";
-  const { ok, abs } = insideCwd(cwd, rel);
-  if (!ok) return "refused";
-  if (isSensitivePath(abs)) return "refused";
-  try {
-    return existsSync2(abs) && statSync3(abs).isFile() ? "yes" : "no";
-  } catch {
-    return "no";
-  }
-}
-function readProjectFile(cwd, rel, limits = WORKSPACE_LIMITS) {
-  if (isSensitivePath(rel)) return { kind: "refused" };
-  const { ok, abs } = insideCwd(cwd, rel);
-  if (!ok) return { kind: "refused" };
-  if (isSensitivePath(abs)) return { kind: "refused" };
-  let stat;
-  try {
-    stat = statSync3(abs);
-  } catch {
-    return { kind: "missing" };
-  }
-  if (!stat.isFile()) return { kind: "missing" };
-  if (stat.size > limits.maxFileBytes) return { kind: "too_large" };
-  let buffer;
-  try {
-    buffer = readFileSync3(abs);
-  } catch {
-    return { kind: "missing" };
-  }
-  if (buffer.subarray(0, BINARY_SNIFF_BYTES).includes(0)) return { kind: "binary" };
-  return { kind: "text", text: buffer.toString("utf8") };
-}
-function gitEnv() {
-  const env = { ...process.env };
-  delete env.GIT_EXTERNAL_DIFF;
-  env.GIT_PAGER = "";
-  env.GIT_TERMINAL_PROMPT = "0";
-  return env;
-}
-async function git(cwd, args, limits) {
-  try {
-    if (!statSync3(cwd).isDirectory()) return void 0;
-  } catch {
-    return void 0;
-  }
-  try {
-    const { stdout } = await run("git", args, {
-      cwd,
-      timeout: limits.gitTimeoutMs,
-      maxBuffer: 2 * 1024 * 1024,
-      env: gitEnv(),
-      windowsHide: true
-    });
-    return String(stdout);
-  } catch {
-    return void 0;
-  }
-}
-function clampDiff(text, max) {
-  if (text.length <= max) return { text, truncated: false };
-  const head = text.slice(0, max);
-  const boundary = Math.max(head.lastIndexOf("\ndiff --git "), head.lastIndexOf("\n@@ "));
-  const cut = boundary > 0 ? boundary : head.lastIndexOf("\n");
-  return { text: head.slice(0, cut > 0 ? cut : max), truncated: true };
-}
-async function gitDiffHead(cwd, paths, limits = WORKSPACE_LIMITS) {
-  const args = ["diff", "HEAD", "--no-color", "--no-ext-diff", "-U3"];
-  if (paths !== void 0 && paths.length > 0) args.push("--", ...paths);
-  const out = await git(cwd, args, limits);
-  return out === void 0 ? void 0 : clampDiff(out, limits.maxDiffChars);
-}
-async function gitNameStatus(cwd, limits = WORKSPACE_LIMITS) {
-  const out = await git(cwd, ["diff", "HEAD", "--name-status", "--no-color"], limits);
-  const map = /* @__PURE__ */ new Map();
-  if (out === void 0) return map;
-  for (const line of out.split("\n")) {
-    const parts = line.split("	");
-    const code = parts[0]?.trim();
-    if (code === void 0 || code === "") continue;
-    const letter = code[0];
-    if (letter !== "A" && letter !== "M" && letter !== "D" && letter !== "R") continue;
-    const path = letter === "R" ? parts[2] : parts[1];
-    if (path !== void 0 && path !== "") map.set(path, letter);
-  }
-  return map;
-}
-
 // src/hooks/handlers/stop.ts
 var MAX_CLAIM_PIECES = 2;
 var MAX_VERIFIED_CLAIMS = 20;
@@ -4938,7 +5590,7 @@ var MIN_MESSAGE_CHARS = 40;
 var MAX_MESSAGE_CHARS = 6e3;
 var MAX_REQUEST_CHARS = 4e3;
 var MAX_STOP_BLOCKS = 1;
-var QUESTIONS3 = {
+var QUESTIONS4 = {
   claims_complete: {
     type: "noul",
     instructions: {
@@ -5158,7 +5810,7 @@ async function handleStop(input, deps) {
         request: request2,
         final_message: redactAndClamp(message.slice(-MAX_MESSAGE_CHARS), MAX_MESSAGE_CHARS)
       },
-      questions: QUESTIONS3,
+      questions: QUESTIONS4,
       signal: controller.signal
     });
     let claimsPolicy;
@@ -5272,7 +5924,7 @@ var KINDS = {
   review_or_audit: "The user is asking for existing code or work to be checked.",
   other: "None of the above fits."
 };
-var QUESTIONS4 = {
+var QUESTIONS5 = {
   kind: { type: "choice", instructions: "What kind of task is `prompt` asking for?", criteria: KINDS },
   ambiguity: {
     type: "score",
@@ -5321,7 +5973,7 @@ async function handleUserPromptSubmit(input, deps) {
   try {
     const result = await deps.model.evaluate({
       state: { prompt: redactAndClamp(prompt, MAX_PROMPT_CHARS) },
-      questions: QUESTIONS4,
+      questions: QUESTIONS5,
       signal: controller.signal
     });
     const kind = result.answers.kind;
@@ -6191,8 +6843,8 @@ function calibrateReport(config, store) {
     const boundaries = prompts.map((record) => Date.parse(record.ts ?? "")).filter((ts) => Number.isFinite(ts)).sort((a, b) => a - b);
     const perPrompt = boundaries.map((start, index) => {
       const end = boundaries[index + 1] ?? Number.POSITIVE_INFINITY;
-      return notes.filter((note) => {
-        const ts = Date.parse(note.ts ?? "");
+      return notes.filter((note2) => {
+        const ts = Date.parse(note2.ts ?? "");
         return Number.isFinite(ts) && ts >= start && ts < end;
       }).length;
     });

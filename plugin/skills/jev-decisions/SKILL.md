@@ -184,6 +184,15 @@ line starting with `[jev]`, that is this plugin's classifier, not the user:
   last test, build, type-check or lint command exited zero, and it is telling you
   that your own claim contradicts that record. Re-run the command, or correct the
   claim.
+- **`[jev] The Edit call above (…) was scored by the jev classifier as …`** — a
+  note about this one edit's old and new text (and any CLAUDE.md rule lines it was
+  given), not the rest of the file, its callers, or the tests. If the finding
+  matches what the change needs, nothing changes; it is advisory.
+- **`[jev] tripwire t-… this Edit call was not run …`** — the edit hardcodes a
+  secret, or removes a test the recent prompts did not ask to remove. Read the
+  value from the environment (or keep the assertion) and no marker is needed; or,
+  if the literal is genuinely required, re-run the edit after a separate Bash call
+  `true # jev:intended t-…: <the sentence of the request that requires it>`.
 - **`[jev] Your final message names N things the workspace does not show: …`** —
   the file and identifier checks behind this ran in code, against the project and
   `git diff HEAD`: a file you named is not there, or an identifier you named is in

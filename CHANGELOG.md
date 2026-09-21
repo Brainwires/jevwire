@@ -7,6 +7,30 @@ documented in this file. The npm package is published as `jevwire` and the Claud
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.1] — 2026-09-21, semantic code lint
+
+The edit-time half of `docs/DESIGN_0.6.md` §3: an in-project edit is now judged before it is written,
+a tripwire for the two block-grade findings and an advisory note for the rest. `pr_scope` on `git
+commit` (the commit-time half) follows in 0.6.2.
+
+Every finding is **a regex gate then a Noul** — the regex decides whether a pattern is *present* (which
+Jev cannot reliably find or count in a diff), the Noul decides whether it *matters* (a `catch` that
+discards the error vs one that rethrows; a new `any` vs the word in a comment). Most edits match no
+gate and cost nothing; a judged edit is ~3–5k tokens (~$0.0002).
+
+### Added
+
+- **Semantic code lint on edits** (`lint`, default `advisory`; `tripwire` keeps only the two denials;
+  `off` disables it). It **denies** an edit that hardcodes a secret, or removes a test the last prompts
+  did not ask to remove — as a tripwire, re-runnable after a `true # jev:intended t-…` affirmation, the
+  same mechanism as the gate. It **notes** a swallowed exception, a hardcoded URL or absolute path, a
+  new type/lint suppression, a changed exported signature, a placeholder, or — with `lint_conventions`
+  (default on) — a break of a rule line in your `CLAUDE.md` (up to 12 lines extracted; nothing else from
+  CLAUDE.md is sent). Notes share the gate's 5-per-prompt cap and dedupe. A Write reads the current file
+  so a rewrite's removed lines are seen; sensitive and out-of-project writes keep the gate path.
+- **Config surfaced in `/plugin`:** `lint`, `lint_conventions`, and `verify_claims` (which shipped in
+  0.6.0) are now userConfig options with env passthrough.
+
 ## [0.6.0] — 2026-09-21, code development
 
 The first half of the "code development" work from `docs/DESIGN_0.6.md`: better ranking, a tool for

@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "jev",
   "displayName": "Jev",
-  "version": "0.6.0",
+  "version": "0.6.1",
   "description": "Puts a fast calibrated classifier at the harness boundaries: hands Claude a note about a risky tool call, denies the two block-grade cases once with a reason Claude can answer, flags tool results that read like prompt injection, and catches a turn that stops short of the work it was asked to do. Advisory to the agent, never a prompt to you, and fail-open.",
   "author": {
     "name": "Brainwires"
@@ -33,7 +33,11 @@
       "title": "Tool-call gate",
       "description": "off: no PreToolUse gate at all. advisory: judge writes outside the project, sensitive paths, unrecognized shell commands and MCP tools with unknown effects, then hand Claude a note about what was scored; the two block-grade cases are denied once with a reason Claude can answer. strict: also judge ordinary edits inside the project, and note the cases advisory mode keeps to itself. You are never prompted in any of the three.",
       "default": "advisory",
-      "options": ["off", "advisory", "strict"]
+      "options": [
+        "off",
+        "advisory",
+        "strict"
+      ]
     },
     "ask_on_trip": {
       "type": "boolean",
@@ -80,12 +84,37 @@
       "title": "Jev model",
       "description": "Versioned id the hooks and MCP server send. Pinned so an alias move cannot shift every probability under thresholds you have tuned. Set jev-latest to follow releases.",
       "default": "jev-1.13.0"
+    },
+    "lint": {
+      "type": "string",
+      "title": "Semantic code lint on edits",
+      "description": "Judge in-project edits with the model: 'advisory' notes on a swallowed error, a hardcoded URL, a new suppression, a placeholder, or a CLAUDE.md-convention break, and denies a hardcoded secret or an unrequested removed test; 'tripwire' keeps only those two denials; 'off' disables it. A regex gate keeps most edits at zero calls.",
+      "default": "advisory",
+      "options": [
+        "off",
+        "tripwire",
+        "advisory"
+      ]
+    },
+    "lint_conventions": {
+      "type": "boolean",
+      "title": "Check edits against CLAUDE.md",
+      "description": "When linting, also check each edit against the rule lines in your CLAUDE.md (up to 12). Off leaves the built-in checks only.",
+      "default": true
+    },
+    "verify_claims": {
+      "type": "boolean",
+      "title": "Verify the final message's claims",
+      "description": "At Stop, when the final message names a file, identifier or change, check it against git diff HEAD. The file/identifier checks run in code regardless; this toggles only the model reading the diff.",
+      "default": true
     }
   },
   "mcpServers": {
     "jev": {
       "command": "node",
-      "args": ["${CLAUDE_PLUGIN_ROOT}/dist/mcp.mjs"],
+      "args": [
+        "${CLAUDE_PLUGIN_ROOT}/dist/mcp.mjs"
+      ],
       "env": {
         "JEV_PLUGIN_API_KEY": "${user_config.api_key}",
         "JEV_PLUGIN_DAEMON": "1",
@@ -98,7 +127,10 @@
         "CLAUDE_PLUGIN_OPTION_ROUTE_PROMPTS": "${user_config.route_prompts}",
         "CLAUDE_PLUGIN_OPTION_AUTO_THRESHOLD": "${user_config.auto_threshold}",
         "CLAUDE_PLUGIN_OPTION_CONFIDENCE_THRESHOLD": "${user_config.confidence_threshold}",
-        "CLAUDE_PLUGIN_OPTION_MODEL": "${user_config.model}"
+        "CLAUDE_PLUGIN_OPTION_MODEL": "${user_config.model}",
+        "CLAUDE_PLUGIN_OPTION_LINT": "${user_config.lint}",
+        "CLAUDE_PLUGIN_OPTION_LINT_CONVENTIONS": "${user_config.lint_conventions}",
+        "CLAUDE_PLUGIN_OPTION_VERIFY_CLAIMS": "${user_config.verify_claims}"
       }
     }
   }
