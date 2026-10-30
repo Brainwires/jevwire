@@ -29493,7 +29493,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.6.3";
+var HOOK_VERSION = "0.6.4";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
@@ -39954,7 +39954,7 @@ async function run7(model, input2, config2, signal) {
 
 // src/server.ts
 var SERVER_NAME = "jevwire";
-var SERVER_VERSION = "0.6.3";
+var SERVER_VERSION = "0.6.4";
 var ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
 function ok(output2) {
   return {

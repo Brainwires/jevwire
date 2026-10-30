@@ -7,6 +7,20 @@ documented in this file. The npm package is published as `jevwire` and the Claud
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.4] — 2026-10-30
+
+### Fixed
+
+- **Stop claim check: an identifier whose file cannot be read is no longer "fabricated".** Stage 1
+  reported a named identifier as fabricated whenever its bound file was missing or unreadable, so
+  correct messages about code outside the project blocked the Stop. A file that cannot be read is
+  not evidence about the identifier: it now reads as `unlocated` (log-only), or `present` if the diff
+  adds it. ([#5](https://github.com/Brainwires/jevwire/issues/5), [#7](https://github.com/Brainwires/jevwire/pull/7), thanks @xujiantop-crypto)
+- **Stop claim check: descriptive prose no longer borrows the message's only file.** An identifier
+  with no file of its own inherited the message's single file reference even in a sentence that only
+  described it (`route_prompts` "is not in CLAUDE.md"). The fallback now applies only to identifiers
+  in a change sentence.
+
 ## [0.6.3] — 2026-09-21
 
 ### Fixed
