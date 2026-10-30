@@ -135,10 +135,13 @@ export function extractClaims(message: string, limits: ExtractLimits = CLAIM_LIM
     }
   }
 
-  // An identifier with no file of its own borrows the message's only file.
+  // An identifier in a change sentence with no file of its own borrows the
+  // message's only file. Descriptive prose must not inherit an unrelated file.
   const onlyFile = files.length > 0 && new Set(files.map((f) => f.path)).size === 1 ? files[0]!.path : undefined;
   if (onlyFile !== undefined) {
-    for (const ident of idents) if (ident.file === undefined) ident.file = onlyFile;
+    for (const ident of idents) {
+      if (ident.file === undefined && CHANGE_VERB.test(ident.sentence)) ident.file = onlyFile;
+    }
   }
 
   return { files, idents, claims };
@@ -221,9 +224,10 @@ export function checkReferences(
     if (!isProjectRelative(ref.file)) return { ...ref, verdict: "unlocated" };
     const segment = ref.name.split(".").pop() ?? ref.name;
     const read = ctx.readFile(ref.file);
-    const inFile = read.kind === "text" && (read as { text: string }).text.includes(segment);
     const inDiff = added.includes(segment);
     if (read.kind === "refused") return { ...ref, verdict: "refused" };
+    if (read.kind !== "text") return { ...ref, verdict: inDiff ? "present" : "unlocated" };
+    const inFile = (read as { text: string }).text.includes(segment);
     return inFile || inDiff ? { ...ref, verdict: "present" } : { ...ref, verdict: "fabricated" };
   });
 

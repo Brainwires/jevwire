@@ -30,6 +30,19 @@ describe("extractClaims", () => {
     const out = extractClaims("Ran `npm` and touched `ab`.");
     expect(out.idents).toHaveLength(0);
   });
+
+  it("does not bind descriptive identifiers to an unrelated only file", () => {
+    const out = extractClaims(
+      "The plugin exposes `route_prompts`, `jev_evaluate`, and `jev_rank`. Updated CLAUDE.md with setup notes.",
+    );
+    expect(out.idents).toHaveLength(3);
+    for (const ident of out.idents) expect(ident.file).toBeUndefined();
+  });
+
+  it("still binds a changed identifier to the message's only file", () => {
+    const out = extractClaims("Added `retryWithBackoff` for transient failures. The implementation is in src/client.ts.");
+    expect(out.idents[0]?.file).toBe("src/client.ts");
+  });
 });
 
 function context(overrides: Partial<Stage1Context>): Stage1Context {
@@ -88,6 +101,24 @@ describe("checkReferences (stage 1)", () => {
       }),
     );
     expect(idents[0]!.verdict).toBe("present");
+  });
+
+  it("does not fabricate an identifier when its bound file cannot be read", () => {
+    const extracted = extractClaims("Added `retryWithBackoff` to src/client.ts.");
+    const stage1 = checkReferences(
+      extracted,
+      context({
+        fileExists: () => "yes",
+        readFile: () => ({ kind: "missing" }),
+        diffText: "",
+      }),
+    );
+    expect(stage1.idents[0]!.verdict).toBe("unlocated");
+
+    const result = stopClaimsPolicy(stage1, undefined, 0.85);
+    expect(result.block).toBe(false);
+    expect(result.counts.fabricated).toBe(0);
+    expect(result.counts.unlocated).toBe(1);
   });
 
   it("does not fabricate a bare basename that lives deeper in the tree", () => {

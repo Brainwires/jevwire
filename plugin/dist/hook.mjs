@@ -5718,7 +5718,9 @@ function extractClaims(message, limits = CLAIM_LIMITS) {
   }
   const onlyFile = files.length > 0 && new Set(files.map((f) => f.path)).size === 1 ? files[0].path : void 0;
   if (onlyFile !== void 0) {
-    for (const ident of idents) if (ident.file === void 0) ident.file = onlyFile;
+    for (const ident of idents) {
+      if (ident.file === void 0 && CHANGE_VERB.test(ident.sentence)) ident.file = onlyFile;
+    }
   }
   return { files, idents, claims };
 }
@@ -5752,9 +5754,10 @@ function checkReferences(extracted, ctx) {
     if (!isProjectRelative(ref.file)) return { ...ref, verdict: "unlocated" };
     const segment = ref.name.split(".").pop() ?? ref.name;
     const read2 = ctx.readFile(ref.file);
-    const inFile = read2.kind === "text" && read2.text.includes(segment);
     const inDiff = added.includes(segment);
     if (read2.kind === "refused") return { ...ref, verdict: "refused" };
+    if (read2.kind !== "text") return { ...ref, verdict: inDiff ? "present" : "unlocated" };
+    const inFile = read2.text.includes(segment);
     return inFile || inDiff ? { ...ref, verdict: "present" } : { ...ref, verdict: "fabricated" };
   });
   return { files, idents };
