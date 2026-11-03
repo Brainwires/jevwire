@@ -7,6 +7,20 @@ documented in this file. The npm package is published as `jevwire` and the Claud
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.5] — 2026-11-03
+
+### Fixed
+
+- **`.config/gcloud` is treated as sensitive again.** `SENSITIVE_DIRS` was compared against single
+  path segments, so the one entry that spans two (`.config/gcloud`) never matched, and gcloud
+  credentials such as `application_default_credentials.json` were not flagged. Entries now match
+  as runs of consecutive segments, and a test checks that every entry matches.
+  ([#2](https://github.com/Brainwires/jevwire/issues/2), thanks @MrJev)
+
+### Changed
+
+- **Published on npm.** The `npx -y jevwire` and `npm i jevwire` instructions in the README now work.
+
 ## [0.6.4] — 2026-10-30
 
 ### Fixed
