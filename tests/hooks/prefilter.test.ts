@@ -23,6 +23,7 @@ import {
   scanBash,
   structuredAction,
 } from "../../src/hooks/prefilter.js";
+import { SENSITIVE_DIRS } from "../../src/util/sensitive-path.js";
 
 type Kind = "skip" | "judge" | "escalate";
 
@@ -429,6 +430,10 @@ describe("file writes", () => {
     "/home/dev/project/.claude/settings.local.json",
     "/home/dev/project/keys/private.key",
     "/home/dev/.npmrc",
+    "/home/dev/.config/gcloud/credentials.db",
+    "/home/dev/.config/gcloud/application_default_credentials.json",
+    ".config/gcloud/access_tokens.db",
+    "C:\\Users\\dev\\.config\\gcloud\\credentials.db",
   ];
   for (const path of sensitive) {
     it(`treats ${path} as sensitive`, () => {
@@ -437,8 +442,19 @@ describe("file writes", () => {
     });
   }
 
+  // Every entry must be able to match: ".config/gcloud" once spanned two
+  // segments and was compared against one, so it never fired (#2).
+  for (const dir of SENSITIVE_DIRS) {
+    it(`matches files under ${dir}`, () => {
+      expect(isSensitivePath(`/home/dev/${dir}/some-file`)).toBe(true);
+      expect(isSensitivePath(`${dir}/some-file`)).toBe(true);
+    });
+  }
+
   const ordinary = [
     "/home/dev/project/src/index.ts",
+    "/home/dev/.config/other-tool/settings.json",
+    "/home/dev/project/gcloud/notes.md",
     "/home/dev/project/README.md",
     "/home/dev/project/docs/environment.md",
     "/home/dev/project/src/environment.ts",

@@ -1470,14 +1470,21 @@ var SENSITIVE_BASENAMES = [
   /^\.gitconfig$/i
 ];
 var SENSITIVE_EXTENSIONS = [/\.pem$/i, /\.p12$/i, /\.pfx$/i, /\.key$/i, /\.keystore$/i, /\.jks$/i];
-var SENSITIVE_DIRS = /* @__PURE__ */ new Set([".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker"]);
+var SENSITIVE_DIRS = [".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker"];
+var SENSITIVE_DIR_SEGMENTS = SENSITIVE_DIRS.map((dir) => dir.split("/"));
+function hasSegments(parts, segments) {
+  for (let i = 0; i + segments.length <= parts.length; i++) {
+    if (segments.every((segment, j) => parts[i + j] === segment)) return true;
+  }
+  return false;
+}
 function isSensitivePath(path) {
   const normalized = path.replace(/\\/g, "/");
   const parts = normalized.split("/").filter((part) => part !== "");
   const base = parts[parts.length - 1] ?? "";
   if (SENSITIVE_BASENAMES.some((pattern) => pattern.test(base))) return true;
   if (SENSITIVE_EXTENSIONS.some((pattern) => pattern.test(base))) return true;
-  if (parts.some((part) => SENSITIVE_DIRS.has(part))) return true;
+  if (SENSITIVE_DIR_SEGMENTS.some((segments) => hasSegments(parts, segments))) return true;
   if (/\/\.claude\/settings[^/]*\.json$/i.test(`/${normalized}`)) return true;
   if (/\/\.claude\/(settings|hooks)\//i.test(`/${normalized}`)) return true;
   if (parts.includes(".git")) return true;

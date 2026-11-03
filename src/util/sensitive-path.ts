@@ -40,7 +40,18 @@ const SENSITIVE_BASENAMES = [
 
 const SENSITIVE_EXTENSIONS = [/\.pem$/i, /\.p12$/i, /\.pfx$/i, /\.key$/i, /\.keystore$/i, /\.jks$/i];
 
-const SENSITIVE_DIRS = new Set([".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker"]);
+/** Directories whose whole contents are secret. An entry may span segments (`.config/gcloud`). */
+export const SENSITIVE_DIRS: readonly string[] = [".ssh", ".aws", ".gnupg", ".config/gcloud", ".kube", ".docker"];
+
+const SENSITIVE_DIR_SEGMENTS = SENSITIVE_DIRS.map((dir) => dir.split("/"));
+
+/** True when `segments` appears as a consecutive run anywhere in `parts`. */
+function hasSegments(parts: readonly string[], segments: readonly string[]): boolean {
+  for (let i = 0; i + segments.length <= parts.length; i++) {
+    if (segments.every((segment, j) => parts[i + j] === segment)) return true;
+  }
+  return false;
+}
 
 /** True when reading or writing here is a decision a human should make. */
 export function isSensitivePath(path: string): boolean {
@@ -50,7 +61,7 @@ export function isSensitivePath(path: string): boolean {
 
   if (SENSITIVE_BASENAMES.some((pattern) => pattern.test(base))) return true;
   if (SENSITIVE_EXTENSIONS.some((pattern) => pattern.test(base))) return true;
-  if (parts.some((part) => SENSITIVE_DIRS.has(part))) return true;
+  if (SENSITIVE_DIR_SEGMENTS.some((segments) => hasSegments(parts, segments))) return true;
   // Claude Code's own configuration: a hook that lets an agent rewrite the
   // permission rules has defeated itself.
   if (/\/\.claude\/settings[^/]*\.json$/i.test(`/${normalized}`)) return true;
