@@ -11,4 +11,4 @@
  * ever disagrees with `package.json`.
  */
 
-export const HOOK_VERSION = "0.6.5";
+export const HOOK_VERSION = "0.6.6";

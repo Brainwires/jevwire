@@ -7,6 +7,21 @@ Code plugin is `jev`; the repository was renamed to jevwire after 0.3.0.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.6] — 2026-11-03
+
+### Changed
+
+- **Published on npm as `@brainwires/jevwire`.** npm refused the unscoped `jevwire` name, so the
+  package is scoped (with public access). The command it installs is still `jevwire`. Use
+  `npx -y @brainwires/jevwire` for the MCP server and `npm i @brainwires/jevwire` for the library,
+  and import from `"@brainwires/jevwire"`. The README, SECURITY.md and the missing-API-key message
+  say so. The repository, the plugin (`jev`) and the marketplace (`brainwires-jevwire`) keep their
+  names, so plugin installs are unaffected.
+- **Dependencies updated.** `@modelcontextprotocol/sdk` 1.30.0 → 1.32.2 and `zod` 4.6.5 → 4.6.7
+  (bundled into `plugin/dist/mcp.mjs`); dev tooling `typescript` 5.9 → 7.0, `vitest` 3.2 → 4.1,
+  `tsx` 4.23.15 and `@types/node` 24.19. vitest stays on 4.x because 5.x needs Node 22.12, and
+  the package still supports Node 20.
+
 ## [0.6.5] — 2026-11-03
 
 ### Fixed
@@ -19,7 +34,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- **Published on npm.** The `npx -y jevwire` and `npm i jevwire` instructions in the README now work.
+- **Not published on npm.** The publish was meant to make the README's `npx -y jevwire` and
+  `npm i jevwire` work, but npm rejected the unscoped name as too similar to `rewire`. 0.6.6 is the
+  first release on npm.
 
 ## [0.6.4] — 2026-10-30
 
