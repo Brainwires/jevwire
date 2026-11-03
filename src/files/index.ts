@@ -115,7 +115,7 @@ export interface FileSelection {
 
 /**
  * The project root. `CLAUDE_PROJECT_DIR` is what Claude Code exports to a
- * plugin's MCP server; a bare `npx jevwire` has only its cwd.
+ * plugin's MCP server; a bare `npx @brainwires/jevwire` has only its cwd.
  *
  * Resolved through `realpath` so that a root reached by a symlink — `/tmp` on
  * macOS is `/private/tmp`, and every temp-dir test hits this — does not make

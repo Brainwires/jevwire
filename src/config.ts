@@ -49,7 +49,7 @@ export const DEFAULTS = {
 export const MISSING_API_KEY_MESSAGE =
   "TYPESAFE_API_KEY is not set, so this server cannot reach the Jev API. " +
   "Set it in the MCP server's environment (for example: " +
-  "`claude mcp add jev -e TYPESAFE_API_KEY=sk-... -- npx -y jevwire`) and restart the server. " +
+  "`claude mcp add jev -e TYPESAFE_API_KEY=sk-... -- npx -y @brainwires/jevwire`) and restart the server. " +
   "If this is the Claude Code plugin, either set the API key in the plugin's settings or export " +
   "TYPESAFE_API_KEY before starting Claude Code, then run /reload-plugins. " +
   "Keys are issued at https://typesafe.ai.";

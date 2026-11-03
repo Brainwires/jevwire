@@ -1,7 +1,7 @@
 # Security
 
 Security policy for **jevwire** ([Brainwires/jevwire](https://github.com/Brainwires/jevwire)),
-published on npm as `jevwire` and installed as the Claude Code plugin `jev`.
+published on npm as `@brainwires/jevwire` and installed as the Claude Code plugin `jev`.
 
 ## What leaves the machine
 

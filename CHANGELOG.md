@@ -1,8 +1,8 @@
 # Changelog
 
 All notable changes to jevwire ([Brainwires/jevwire](https://github.com/Brainwires/jevwire)) are
-documented in this file. The npm package is published as `jevwire` and the Claude Code plugin is
-`jev`; the repository was renamed to jevwire after 0.3.0.
+documented in this file. The npm package is published as `@brainwires/jevwire` (command `jevwire`) and the Claude
+Code plugin is `jev`; the repository was renamed to jevwire after 0.3.0.
 
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).

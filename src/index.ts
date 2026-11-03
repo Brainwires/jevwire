@@ -41,7 +41,7 @@ async function main(): Promise<void> {
   log(`v${SERVER_VERSION} ready on stdio (model ${config.model}, base ${config.baseUrl}).`);
 
   // Only when the plugin manifest asked for it. Starting a hook daemon from a
-  // plain `npx jevwire` would start a process with no hooks to serve.
+  // plain `npx @brainwires/jevwire` would start a process with no hooks to serve.
   const watchdog = startDaemonWatchdog();
   if (watchdog !== undefined) log("watching the hook daemon every 10 s (JEV_PLUGIN_DAEMON=1).");
 }

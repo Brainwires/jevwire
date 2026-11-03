@@ -1,5 +1,5 @@
 {
-  "name": "jevwire",
+  "name": "@brainwires/jevwire",
   "version": "0.6.5",
   "type": "module",
   "description": "MCP server and embeddable decision layer for TypeSafe AI's Jev System One model",
@@ -25,6 +25,9 @@
     "CHANGELOG.md",
     "SECURITY.md"
   ],
+  "publishConfig": {
+    "access": "public"
+  },
   "engines": {
     "node": ">=20"
   },

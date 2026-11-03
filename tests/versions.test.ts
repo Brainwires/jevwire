@@ -86,7 +86,7 @@ describe("npm run bump", () => {
 
   it("covers exactly the files this test asserts on", () => {
     // If someone adds a version to a new file, both lists have to grow.
-    expect(editsFor("jevwire")).toHaveLength(6);
+    expect(editsFor("@brainwires/jevwire")).toHaveLength(6);
   });
 
   it("leaves dependency versions alone", () => {
@@ -152,6 +152,7 @@ describe("the package manifest is publishable", () => {
   });
 
   it("does not leave the root directory unversioned", () => {
-    expect(pkg.name).toBe("jevwire");
+    expect(pkg.name).toBe("@brainwires/jevwire");
+    expect(pkg.bin).toEqual({ jevwire: "dist/index.js" });
   });
 });

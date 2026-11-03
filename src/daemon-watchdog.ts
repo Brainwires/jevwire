@@ -17,7 +17,7 @@
  *   error is swallowed and counted; nothing here is worth failing a tool call
  *   over, and stderr in an MCP server is the user's transcript.
  * - **Do nothing unless asked.** It is off unless the manifest sets
- *   `JEV_PLUGIN_DAEMON=1`, so `npx jevwire` as a plain MCP server — no plugin,
+ *   `JEV_PLUGIN_DAEMON=1`, so `npx @brainwires/jevwire` as a plain MCP server — no plugin,
  *   no hooks — never starts a daemon that would have no hooks to serve.
  */
 
@@ -107,7 +107,7 @@ export function startDaemonWatchdog(
 
   const timer = setInterval(() => void tick(), intervalMs);
   // The MCP server's stdio transport is what keeps the process alive. This must
-  // never be the reason it stays up, or `npx jevwire | head` would hang.
+  // never be the reason it stays up, or `npx @brainwires/jevwire | head` would hang.
   timer.unref();
 
   // The first pass runs immediately rather than after ten seconds: if the
