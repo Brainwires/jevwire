@@ -30,7 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   path segments, so the one entry that spans two (`.config/gcloud`) never matched, and gcloud
   credentials such as `application_default_credentials.json` were not flagged. Entries now match
   as runs of consecutive segments, and a test checks that every entry matches.
-  ([#2](https://github.com/Brainwires/jevwire/issues/2), thanks @MrJev)
+  ([#2](https://github.com/Brainwires/jevwire/issues/2), thanks @MrJev, and @Jah-yee, who first sent a fix in [#3](https://github.com/Brainwires/jevwire/pull/3))
 
 ### Changed
 
