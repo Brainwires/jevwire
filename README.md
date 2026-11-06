@@ -17,9 +17,10 @@ It is three things:
 - **An embeddable library** — `JevDecisionModel` plus a pure `run*` function per tool, so mandatory
   checks can live in your harness instead of in a tool an agent may decline to call.
 - **A Claude Code plugin** — hooks that put judgments at the harness boundaries: before a tool
-  call, after a fetched result, before the turn ends. Everything they decide is addressed to Claude,
-  not to you: a note about a call that already ran, or a single `deny` Claude can answer. As of
-  0.3.0 they never prompt you.
+  call, after a fetched result, before the turn ends. A judgment is addressed to Claude, not to
+  you: a note about a call that already ran, or a single `deny` Claude can answer. The one
+  exception, since 0.7.0, is a command that matches a hard-coded rule (`rm -rf ~`, a force push to
+  `main`, turning the plugin off): that becomes a permission prompt you answer.
 
 It is **not** for generation, arithmetic, counting, date comparison, or multi-hop reasoning. It
 answers bounded questions over text you hand it. Anything numeric or ordered should be extracted as
@@ -750,11 +751,13 @@ override are pure functions with their own tests; the model only ever supplies p
   entirely when the call is blocked. Only a tripwire (the hard-coded patterns and a model
   block-grade judgment) acts before execution. If you read the note count as "things that were
   prevented", you will be wrong every time.
-- **A tripwire is answerable by the agent, on purpose.** Claude can re-issue the identical call with
-  `# jev:intended <reason>` and it passes. That is the design — nobody is prompted, and a gate the
-  agent cannot answer is a gate that ends the turn — but it means the plugin is not a boundary. The
-  mitigations are that a marker is honoured only against a trip this hook wrote for that exact
-  action within 30 minutes, marker text never reaches Jev, and every marker is logged and printed by
+- **A classifier tripwire is answerable by the agent, on purpose.** For a model, lint or commit trip,
+  Claude can re-issue the identical call with `# jev:intended <reason>` and it passes. That is the
+  design — a classifier can be wrong, and a gate the agent cannot answer is a gate that ends the
+  turn — but it means those trips are not a boundary. Code-rule trips are different since 0.7.0:
+  under the default `pattern_trips: ask` a marker does not clear them, you do. The mitigations for
+  the rest are that a marker is honoured only against a trip this hook wrote for that exact action
+  within 30 minutes, marker text never reaches Jev, and every marker is logged and printed by
   `/jev:why`. Read them: `# jev:intended user asked` is a reflex, not a reason, and
   `/jev:calibrate` counts markers typed at calls that were never tripped.
 - **Calibration is yours to measure, and it is not accuracy.** `/jev:calibrate` reports what was
@@ -874,8 +877,15 @@ npm test           # vitest, watch
 npm run type-check
 npm run build      # tsc, then the two esbuild plugin bundles
 npm run smoke      # live, one tiny request; skips when TYPESAFE_API_KEY is unset
-npm run bump -- 0.3.0   # package.json, plugin.json, marketplace.json, lockfile, SERVER_VERSION
+npm run bump -- 0.8.0   # package.json, lockfile, plugin.json, marketplace.json, SERVER_VERSION, HOOK_VERSION
 ```
+
+**Releasing.** Bump, update CHANGELOG.md, rebuild, commit to `main`, then push a `v*` tag
+(`git tag v0.8.0 && git push origin v0.8.0`). `.github/workflows/release.yml` checks that the tag
+matches `package.json`, reruns the checks, publishes to npm through trusted publishing with a
+provenance attestation, and creates the GitHub release. No npm token is stored anywhere; only
+repository admins can push `v*` tags, and the `npm` environment only deploys from them. A version
+with a pre-release suffix (`0.8.0-rc.1`) is published under the `next` dist-tag.
 
 `plugin/dist/` is committed on purpose — a plugin install runs no build step — so rebuild it in the
 same commit as any change under `src/hooks/`. CI runs Node 20 and 22 and fails if the committed

@@ -181,9 +181,14 @@ why:
   next to the tool result — after the call has run — and drops it when the call is blocked. A note
   can only inform what happens next. Only a tripwire (the hard-coded catastrophic patterns and a
   model block-grade judgment) acts before execution.
-- **A tripwire is answerable by the agent.** Claude may re-issue the identical call with
-  `# jev:intended <reason>` on its last line and it passes the hook. That is the point — nothing
-  here prompts you — but it means the plugin stops a mistake, not an adversary. A marker is honoured
+- **A classifier tripwire is answerable by the agent.** For a model, lint or commit trip, Claude may
+  re-issue the identical call with `# jev:intended <reason>` on its last line and it passes the
+  hook. That is the point — a classifier can be wrong — but it means those trips stop a mistake, not
+  an adversary. Since 0.7.0 a code-rule trip (the hard-coded catastrophic patterns, and attempts to
+  turn the plugin off) is not answerable this way: under the default `pattern_trips: ask` it is a
+  permission prompt for you, and in `dontAsk`/`bypassPermissions` it is denied. The code rules match
+  shell text, so interpreter-run code (`python -c`, `base64 -d | sh`) is left to the model judgment,
+  which an agent can answer. A marker is honoured
   only against a trip this hook wrote for that exact action within 30 minutes, marker text never
   reaches the API, a marker on a call that was never tripped is stripped and counted, and every
   marker is logged and printed by `/jev:why`. Injected text that can persuade the agent to act can
@@ -191,6 +196,8 @@ why:
 
 Every hook also fails open on any error (no API key, a timeout, a network error, malformed input, a
 bug), because a gate that breaks your session when an API is unreachable is worse than no gate.
+Since 0.7.0 a tool-gate judgment that errors or times out tells you so, at most once every ten
+minutes per session; the code rules above still apply while it does.
 
 Jev is also not injection-hardened. It reads the tool input, tool result excerpt, or file content
 you hand it as data, and text designed to argue for its own approval — whether typed by you, present
