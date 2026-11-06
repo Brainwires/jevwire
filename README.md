@@ -37,6 +37,8 @@ Node >= 20 for all three routes.
 
 ```
 /plugin marketplace add Brainwires/jevwire
+```
+```
 /plugin install jev@brainwires-jevwire
 ```
 
