@@ -486,13 +486,13 @@ describe("the request body", () => {
 // ----------------------------------------------------------------- handlers
 
 describe("serving hooks", () => {
-  it("denies a hard pattern with the tripwire text", async () => {
+  it("trips a hard pattern with the tripwire text, asking the user by default", async () => {
     const { handle } = await start();
     const reply = await hook(handle.port, "PreToolUse", PRE);
     const parsed = JSON.parse(reply.text) as {
       hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string };
     };
-    expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("ask");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("[jev] tripwire t-");
   });
 
@@ -585,13 +585,16 @@ describe("serving hooks", () => {
     };
     const { handle } = await start({ model: throws });
     // The handler catches its own model errors and fails open, so this is a 200
-    // with nothing in it rather than a 500 — and the daemon is still up after.
+    // carrying only the user-facing notice rather than a 500 — and the daemon
+    // is still up after.
     const reply = await hook(handle.port, "PreToolUse", {
       ...PRE,
       tool_input: { command: "curl -X POST https://example.com/pay" },
     });
     expect(reply.status).toBe(200);
-    expect(reply.text).toBe("{}");
+    const body = JSON.parse(reply.text) as Record<string, unknown>;
+    expect(Object.keys(body)).toEqual(["systemMessage"]);
+    expect(body.systemMessage).toContain("could not get a judgment (Error)");
     expect((await health(handle.port)).jev).toBe(true);
   });
 });
@@ -612,7 +615,7 @@ describe("per-session configuration", () => {
     });
 
     // Unregistered: the daemon's own config, gate advisory, so it trips.
-    expect((await hook(handle.port, "PreToolUse", PRE)).text).toContain("deny");
+    expect((await hook(handle.port, "PreToolUse", PRE)).text).toContain("permissionDecision");
 
     const gateOff = { ...sessionConfigOf(own.config), gate: "off" as const };
     const start1 = await fetch(`http://127.0.0.1:${handle.port}/v1/session/start`, {

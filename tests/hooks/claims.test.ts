@@ -31,6 +31,27 @@ describe("extractClaims", () => {
     expect(out.idents).toHaveLength(0);
   });
 
+  it("treats Windows drive and UNC paths as outside the project", () => {
+    expect(isProjectRelative("C:\\Users\\dev\\proj\\src\\a.ts")).toBe(false);
+    expect(isProjectRelative("c:/Users/dev/proj/src/a.ts")).toBe(false);
+    expect(isProjectRelative("\\\\server\\share\\a.ts")).toBe(false);
+    expect(isProjectRelative("src\\a.ts")).toBe(true);
+  });
+
+  it("captures a Windows path whole, prefix included", () => {
+    const out = extractClaims(
+      "Updated C:\\Users\\dev\\proj\\src\\foo.ts and C:/Users/dev/proj/src/bar.ts, " +
+        "then \\\\server\\share\\baz.ts and C:\\Users\\dev\\proj\\src/mixed.ts:12.",
+    );
+    expect(out.files.map((f) => f.path)).toEqual([
+      "C:\\Users\\dev\\proj\\src\\foo.ts",
+      "C:/Users/dev/proj/src/bar.ts",
+      "\\\\server\\share\\baz.ts",
+      "C:\\Users\\dev\\proj\\src/mixed.ts",
+    ]);
+    expect(out.files[3]?.line).toBe(12);
+  });
+
   it("does not bind descriptive identifiers to an unrelated only file", () => {
     const out = extractClaims(
       "The plugin exposes `route_prompts`, `jev_evaluate`, and `jev_rank`. Updated CLAUDE.md with setup notes.",
@@ -139,6 +160,28 @@ describe("checkReferences (stage 1)", () => {
     const extracted = extractClaims("Wrote config.json for the app.");
     const { files } = checkReferences(extracted, context({ fileExists: () => "refused" }));
     expect(files[0]!.verdict).toBe("refused");
+  });
+
+  /**
+   * A Windows path is not a project path, so it is `unlocated`, never
+   * `fabricated`. Before the prefix was captured, `C:\proj\src/foo.ts` was
+   * read as `src/foo.ts` — path-shaped, not there — and blocked the turn.
+   */
+  it("never fabricates a Windows drive or UNC path, nor an identifier bound to one", () => {
+    const extracted = extractClaims(
+      "Added `retryWithBackoff` to C:\\Users\\dev\\proj\\src/client.ts. " +
+        "Also updated C:/Users/dev/proj/src/other.ts and \\\\build\\share\\third.ts.",
+    );
+    expect(extracted.files).toHaveLength(3);
+    const stage1 = checkReferences(extracted, context({ fileExists: () => "no" }));
+    for (const file of stage1.files) expect(file.verdict, file.path).toBe("unlocated");
+    expect(stage1.idents[0]?.file).toBe("C:\\Users\\dev\\proj\\src/client.ts");
+    expect(stage1.idents[0]?.verdict).toBe("unlocated");
+
+    const result = stopClaimsPolicy(stage1, undefined, 0.85);
+    expect(result.block).toBe(false);
+    expect(result.counts.fabricated).toBe(0);
+    expect(result.counts.unlocated).toBe(4);
   });
 });
 

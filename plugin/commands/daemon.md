@@ -13,7 +13,10 @@ with the `daemon` argument by `SessionStart` and kept alive by a watchdog in jev
 server. Without it the hooks fail open in silence.
 
 Run exactly one of these with the Bash tool, picking the subcommand from the user's
-argument and defaulting to `status`, then show the output verbatim:
+argument and defaulting to `status`, then show the output verbatim. `stop` and `restart`
+are a code-rule trip (`jev-self-disable`), because stopping the daemon silences the hooks;
+under the default `pattern_trips: ask` the user is asked to approve them, and that is
+expected — it is the user's own command:
 
 ```
 node "${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs" daemon-ctl status

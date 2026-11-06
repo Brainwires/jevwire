@@ -47,8 +47,16 @@ export const CLAIM_LIMITS: ExtractLimits = { files: 40, idents: 40, claims: 20 }
 
 const FILE_EXTENSIONS =
   "tsx?|mjs|cjs|jsx?|py|rb|go|rs|java|kt|swift|c|h|cpp|hpp|cs|php|sh|md|json|ya?ml|toml|css|scss|html|vue|svelte|sql|graphql|proto";
+/**
+ * A file reference, with an optional Windows drive (`C:\`, `C:/`) or UNC
+ * (`\\server\share\`) prefix and either separator inside. The prefix has to
+ * be captured, not skipped: without it `C:\proj\src/foo.ts` was read as
+ * `src/foo.ts`, a project-relative path that is not there, and blocked as a
+ * fabrication. The lookbehind refuses `\` as well as `/` so a match cannot
+ * start in the middle of such a path.
+ */
 const FILE_REF = new RegExp(
-  `(?<![\\w@/.-])((?:[\\w.-]+/)*[\\w-]+\\.(?:${FILE_EXTENSIONS}))(?::(\\d+)(?:-(\\d+))?)?(?![\\w/])`,
+  `(?<![\\w@/.\\\\-])((?:[A-Za-z]:[\\\\/]|\\\\\\\\)?(?:[\\w.-]+[\\\\/])*[\\w-]+\\.(?:${FILE_EXTENSIONS}))(?::(\\d+)(?:-(\\d+))?)?(?![\\w/])`,
   "g",
 );
 const REMOVAL = /\b(removed|deleted|dropped|no longer exists|no longer present)\b/i;
@@ -90,9 +98,13 @@ function looksLikeIdentifier(name: string): boolean {
   return /[a-z][A-Z]/.test(name) || name.includes("_") || name.includes(".") || name.length >= 8;
 }
 
-/** Does this file reference look like a project path (not a URL or a home path)? */
+/**
+ * Does this file reference look like a project path — not a URL, a home path,
+ * an absolute POSIX path, a Windows drive path or a UNC share?
+ */
 export function isProjectRelative(path: string): boolean {
-  if (path.startsWith("~") || path.startsWith("/")) return false;
+  if (path.startsWith("~") || path.startsWith("/") || path.startsWith("\\")) return false;
+  if (/^[A-Za-z]:[\\/]/.test(path)) return false;
   if (/^[a-z]+:\/\//i.test(path)) return false;
   return true;
 }

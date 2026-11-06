@@ -7,6 +7,50 @@ Code plugin is `jev`; the repository was renamed to jevwire after 0.3.0.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.0] — 2026-11-06
+
+### Security
+
+- **Pattern trips now go to the user, not the agent.** A code-rule trip (`rm -rf ~`, a force push to
+  main, `mkfs`, …) used to be cleared by the agent re-issuing the call with `# jev:intended <reason>`,
+  which a prompt-injected agent could do in one retry. The new `pattern_trips` setting
+  (`JEV_PATTERN_TRIPS`) defaults to `ask`: the trip is Claude Code's permission prompt, so you approve
+  or refuse it, and a marker no longer clears it (it is logged as `marker-refused`/`affirm-refused`).
+  In modes with no prompt (`dontAsk`, `bypassPermissions`) it is a plain deny. `deny` always blocks;
+  `advisory` restores the old behaviour. Model, lint and commit trips are unchanged.
+- **Pattern trips see through wrappers and nested shells.** `sudo`, `doas`, `env`, `command`,
+  `nice`, `timeout`, `xargs`, `busybox` and similar prefixes, `bash|sh|zsh -c '…'` and `eval '…'`
+  (nested up to three deep) no longer hide a catastrophic command from the code rules.
+- **Wider pattern coverage.** `rm -rf` of an absolute home directory (`/Users/<name>`,
+  `/home/<name>`, `/root`), `~user` or any top-level directory; `find <wide> -delete` and
+  `find <wide> -exec rm`; `rm -rf *` after `cd` to a wide target; `git push --force-with-lease`,
+  `--force-if-includes` and `+main` refspecs; `chmod` with `R` in a flag cluster and any
+  world-writable mode.
+- **The agent can no longer switch jev off by itself.** A new `jev-self-disable` pattern trip covers
+  `hook.mjs disable`, `hook.mjs daemon-ctl stop|restart`, writes to jev's data directory or its
+  installed plugin files, edits to `installed_plugins.json`/`known_marketplaces.json`, edits to
+  Claude Code settings files that touch jev, hooks or enabled plugins, and `claude plugin
+  disable|uninstall` / `claude config set` on hooks or plugins. Your own `/jev:daemon restart` now
+  asks for approval under the default.
+- **Long actions keep their tail.** An action over the 4,000-character budget was cut to its head, so
+  a payload after padding never reached the model. It now keeps the head and the tail around an
+  `…[N chars elided]…` marker.
+- **PowerShell is gated.** The PreToolUse and PostToolUse matchers now include `PowerShell`.
+
+### Changed
+
+- **Gate errors are no longer silent.** When the judgment call fails or times out, the call still goes
+  through (fail open), but you get a `[jev]` notice at most once per session every 10 minutes.
+  ([#2](https://github.com/Brainwires/jevwire/issues/2), thanks @MrJev)
+- **Releases are published from CI** by `.github/workflows/release.yml` on a `v*` tag, using npm
+  trusted publishing with a provenance attestation.
+
+### Fixed
+
+- **Stop claim check: Windows paths.** `C:\…`, `C:/…` and `\\server\share` paths are no longer
+  treated as project-relative, so they report as unlocated rather than fabricated
+  (the follow-up left out of [#7](https://github.com/Brainwires/jevwire/pull/7)).
+
 ## [0.6.6] — 2026-11-03
 
 ### Changed

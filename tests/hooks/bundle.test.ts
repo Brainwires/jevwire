@@ -35,8 +35,11 @@ describe("plugin/dist", () => {
   it("keeps the hook bundle small enough to start fast", () => {
     // Generous headroom; the point is to notice a dependency creeping in.
     // 0.4.0 added the daemon, its control plane and the memo: about +19 KiB of
-    // first-party code, and no new dependency. The ceiling stays where it was.
-    expect(statSync(hook).size).toBeLessThan(300 * 1024);
+    // first-party code, and no new dependency. 0.7 added the wrapper table,
+    // the self-protection rules and the pattern-trip policy: about +17 KiB,
+    // unminified by design, and again no dependency (the build prints
+    // `deps: none`). The ceiling moves up once to cover that and no more.
+    expect(statSync(hook).size).toBeLessThan(330 * 1024);
   });
 
   it("contains the daemon, so the http hooks have something to talk to", () => {

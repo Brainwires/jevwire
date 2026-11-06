@@ -20,7 +20,15 @@
  * that session with the wrong settings.
  */
 
-import { GATE_LEVELS, LINT_LEVELS, type GateLevel, type HookConfig, type LintLevel } from "../config.js";
+import {
+  GATE_LEVELS,
+  LINT_LEVELS,
+  PATTERN_TRIP_POLICIES,
+  type GateLevel,
+  type HookConfig,
+  type LintLevel,
+  type PatternTripPolicy,
+} from "../config.js";
 
 /**
  * A session's configuration as the daemon needs it: everything except the
@@ -75,6 +83,12 @@ export function readSessionConfig(raw: unknown, fallback: SessionConfig): Sessio
     maxRetries: num(value.maxRetries, fallback.maxRetries, 0, 10),
     gate,
     askOnTrip: bool(value.askOnTrip, fallback.askOnTrip),
+    // A snapshot that does not know the policy gets the daemon's own, which
+    // is the secure default unless the daemon's environment says otherwise.
+    patternTrips:
+      typeof value.patternTrips === "string" && (PATTERN_TRIP_POLICIES as readonly string[]).includes(value.patternTrips)
+        ? (value.patternTrips as PatternTripPolicy)
+        : fallback.patternTrips,
     stopCheck: bool(value.stopCheck, fallback.stopCheck),
     screenResults: bool(value.screenResults, fallback.screenResults),
     routePrompts: bool(value.routePrompts, fallback.routePrompts),

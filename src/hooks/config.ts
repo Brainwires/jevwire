@@ -31,6 +31,22 @@ export type GateLevel = (typeof GATE_LEVELS)[number];
 export const LINT_LEVELS = ["off", "tripwire", "advisory"] as const;
 export type LintLevel = (typeof LINT_LEVELS)[number];
 
+/**
+ * Who clears a code-rule (pattern) trip.
+ *
+ * `ask`: the default. The call becomes a permission prompt and the user
+ * approves or refuses it; in a mode with no prompt it is denied. `deny`: always
+ * denied. `advisory`: the 0.6.x behaviour — denied once to Claude, which may
+ * re-issue it with a `# jev:intended` marker. The first two exist because a
+ * marker is something the agent writes, and an agent reading an injected page
+ * can write one as easily as it can write `rm -rf ~`: a code rule that the
+ * agent can clear on its own is a code rule in name only. Model, lint and
+ * commit trips stay advisory, because a classifier can be wrong and a code
+ * rule, by construction, is not.
+ */
+export const PATTERN_TRIP_POLICIES = ["ask", "deny", "advisory"] as const;
+export type PatternTripPolicy = (typeof PATTERN_TRIP_POLICIES)[number];
+
 /** 0.2.x `gate_mode` values, and what each one means as a `gate`. */
 const GATE_MODE_MIGRATION: Record<string, GateLevel> = {
   off: "off",
@@ -47,10 +63,13 @@ export interface HookConfig {
   maxRetries: number;
   gate: GateLevel;
   /**
-   * The only way a human is ever prompted by this plugin: a tripwire emits
-   * `ask` instead of `deny`, in the modes where a prompt has an audience.
+   * A model, lint or commit tripwire emits `ask` instead of `deny`, in the
+   * modes where a prompt has an audience. Pattern trips are governed by
+   * `patternTrips` instead, and prompt by default.
    */
   askOnTrip: boolean;
+  /** Who clears a code-rule trip: the user (`ask`, `deny`) or the agent (`advisory`). */
+  patternTrips: PatternTripPolicy;
   stopCheck: boolean;
   screenResults: boolean;
   routePrompts: boolean;
@@ -109,6 +128,9 @@ export const HOOK_DEFAULTS = {
   maxRetries: 0,
   gate: "advisory" as GateLevel,
   askOnTrip: false,
+  // The first policy is the secure one, and the only line in the hook source
+  // that spells it is the list itself (`tests/hooks/never-allow.test.ts`).
+  patternTrips: PATTERN_TRIP_POLICIES[0] as PatternTripPolicy,
   stopCheck: true,
   screenResults: true,
   routePrompts: false,
@@ -200,6 +222,18 @@ function readLint(env: Env, warnings: string[]): LintLevel {
   return HOOK_DEFAULTS.lint;
 }
 
+/** Read the pattern-trip policy. An unknown value falls back to the secure default. */
+function readPatternTrips(env: Env, warnings: string[]): PatternTripPolicy {
+  const raw = read(env, "pattern_trips", "JEV_PATTERN_TRIPS");
+  if (raw === undefined) return HOOK_DEFAULTS.patternTrips;
+  const lowered = raw.toLowerCase();
+  if ((PATTERN_TRIP_POLICIES as readonly string[]).includes(lowered)) return lowered as PatternTripPolicy;
+  warnings.push(
+    `pattern_trips=${JSON.stringify(raw)} is not one of ${PATTERN_TRIP_POLICIES.join("|")}; using ${HOOK_DEFAULTS.patternTrips}.`,
+  );
+  return HOOK_DEFAULTS.patternTrips;
+}
+
 export function loadHookConfig(env: Env = process.env): HookConfig {
   const warnings: string[] = [];
 
@@ -255,6 +289,7 @@ export function loadHookConfig(env: Env = process.env): HookConfig {
     maxRetries: HOOK_DEFAULTS.maxRetries,
     gate,
     askOnTrip: readBool(env, "ask_on_trip", HOOK_DEFAULTS.askOnTrip, warnings, "JEV_ASK_ON_TRIP"),
+    patternTrips: readPatternTrips(env, warnings),
     stopCheck: readBool(env, "stop_check", HOOK_DEFAULTS.stopCheck, warnings, "JEV_STOP_CHECK"),
     screenResults: readBool(env, "screen_results", HOOK_DEFAULTS.screenResults, warnings, "JEV_SCREEN_RESULTS"),
     routePrompts: readBool(env, "route_prompts", HOOK_DEFAULTS.routePrompts, warnings, "JEV_ROUTE_PROMPTS"),

@@ -124,11 +124,26 @@ export const CASES: HookCase[] = [
     expect: "{}",
   },
   {
-    name: "a hard pattern trips with no model call at all",
+    name: "a hard pattern trips with no model call at all, and asks the user by default",
     event: "PreToolUse",
     input: { ...PRE, tool_input: { command: "rm -rf ~/" } },
     model: () => null,
-    contains: ['"permissionDecision":"deny"', "[jev] tripwire t-", "no model was consulted"],
+    contains: ['"permissionDecision":"ask"', "[jev] tripwire t-", "no model was consulted", "asking the user"],
+  },
+  {
+    name: "a hard pattern denies to Claude under pattern_trips: advisory",
+    event: "PreToolUse",
+    input: { ...PRE, tool_input: { command: "rm -rf ~/" } },
+    config: { patternTrips: "advisory" },
+    model: () => null,
+    contains: ['"permissionDecision":"deny"', "[jev] tripwire t-", "# jev:intended"],
+  },
+  {
+    name: "a hard pattern denies where no prompt can be shown",
+    event: "PreToolUse",
+    input: { ...PRE, permission_mode: "bypassPermissions", tool_input: { command: "rm -rf ~/" } },
+    model: () => null,
+    contains: ['"permissionDecision":"deny"', "no prompt is shown in this mode"],
   },
   {
     name: "a judged, out-of-scope destructive call trips",
@@ -164,6 +179,19 @@ export const CASES: HookCase[] = [
     input: { ...PRE, tool_input: "ls" },
     model: () => null,
     expect: "{}",
+  },
+  {
+    // The one output shape with no decision in it: a gate error lets the call
+    // through and tells the user so. Both paths have to carry the notice.
+    name: "a gate error lets the call through and says so to the user",
+    event: "PreToolUse",
+    input: { ...PRE, tool_input: { command: "npm install" } },
+    model: () =>
+      new FakeModel(() => {
+        throw new Error("connection reset");
+      }),
+    prepare: (store) => store.updateSession("shared", (s) => ({ ...s, prompts: ["install the deps"] })),
+    contains: ['"systemMessage":"[jev] The tool gate could not get a judgment (Error)'],
   },
   {
     name: "gate off silences a hard pattern",

@@ -175,6 +175,12 @@ export interface SessionState {
   /** SessionStart already told the user the key is missing. */
   key_warned?: boolean;
   /**
+   * Epoch ms of the last "the gate let a call through unjudged" notice, so a
+   * dead API is reported once per `GATE_ERROR_NOTICE_INTERVAL_MS` and not on
+   * every tool call. Deliberately NOT reset by a new user prompt.
+   */
+  gate_error_notice_at?: number;
+  /**
    * The non-secret configuration snapshot this session posted to the daemon.
    *
    * Written so a *replaced* daemon — a plugin update, a crash, a
@@ -407,6 +413,9 @@ export class Store {
       };
       if (state.disabled === true) session.disabled = true;
       if (state.key_warned === true) session.key_warned = true;
+      if (typeof state.gate_error_notice_at === "number" && Number.isFinite(state.gate_error_notice_at) && state.gate_error_notice_at >= 0) {
+        session.gate_error_notice_at = state.gate_error_notice_at;
+      }
       // Kept opaque here and validated field by field where it is used
       // (`readSessionConfig`), which is the only place that knows what a
       // sensible value for each setting is.

@@ -170,8 +170,23 @@ describe("coverage", () => {
   it("matches the subagent spawn tools on PreToolUse, so the task can be captured", () => {
     const pre = manifest.hooks.PreToolUse as Matcher[];
     expect(pre).toHaveLength(1);
-    expect(pre[0]?.matcher).toBe("Bash|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__.*");
+    expect(pre[0]?.matcher).toBe("Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__.*");
     expect(manifest.description).toContain("Agent and Task");
+  });
+
+  /**
+   * `prefilter()` and the verification ledger both handle `PowerShell` like
+   * `Bash`, but until 0.6.6 no matcher sent it, so a PowerShell call was never
+   * gated at all (#6). Every matcher that names Bash names PowerShell.
+   */
+  it("sends PowerShell wherever it sends Bash", () => {
+    for (const [event, matchers] of groups) {
+      for (const matcher of matchers) {
+        const names = (matcher.matcher ?? "").split("|");
+        if (names.includes("Bash")) expect(names, `${event} ${matcher.matcher}`).toContain("PowerShell");
+      }
+    }
+    expect((manifest.hooks.PreToolUse as Matcher[])[0]?.matcher).toContain("PowerShell");
   });
 
   it("routes both post-tool matchers, one to the screen and one to the Approval label", () => {
@@ -181,9 +196,11 @@ describe("coverage", () => {
     // bookkeeping-only route, which is what closes a tripwire's lifecycle.
     expect(post[0]?.matcher).toBe("WebFetch|WebSearch|mcp__.*");
     expect(post[0]?.hooks[0]?.url).toContain("/v1/hook/PostToolUse");
-    expect(post[1]?.matcher).toBe("Bash|Write|Edit|MultiEdit|NotebookEdit");
+    expect(post[1]?.matcher).toBe("Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit");
     expect(post[1]?.hooks[0]?.url).toContain("/v1/hook/Approval");
-    expect((manifest.hooks.PostToolUseFailure as Matcher[])[0]?.hooks[0]?.url).toContain("/v1/hook/Approval");
+    const failure = manifest.hooks.PostToolUseFailure as Matcher[];
+    expect(failure[0]?.matcher).toBe("Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|mcp__.*");
+    expect(failure[0]?.hooks[0]?.url).toContain("/v1/hook/Approval");
   });
 
   it("tells the user in its description what the daemon is and how to turn it off", () => {
@@ -191,5 +208,12 @@ describe("coverage", () => {
     expect(manifest.description).toContain("fail open");
     expect(manifest.description).toContain("JEV_HOOKS_DISABLE=1");
     expect(manifest.description).toContain("JEV_DAEMON_DISABLE=1");
+  });
+
+  it("promises a notice for a gate error only with the daemon up", () => {
+    // Without a daemon, Claude Code drops a refused http hook without a word
+    // and nothing here can change that; the description must not claim more.
+    expect(manifest.description).toContain("fail open in silence");
+    expect(manifest.description).toContain("says so to you at most once every ten minutes");
   });
 });

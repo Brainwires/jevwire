@@ -4,17 +4,26 @@ Turns the existing `jevwire` package (DecisionModel core + 6 MCP tools) into a C
 plugin whose HOOKS put Jev judgments at harness boundaries. Same repo, same core.
 
 ## Invariants (do not violate)
-1. **Advisory-only, and never a prompt by default.** Hook output may be: nothing,
-   `additionalContext` (a note), `deny` (a tripwire), Stop `decision:"block"`, or
-   `ask` — but `ask` **only** under the explicit `ask_on_trip` setting and only in a
-   permission mode where a prompt has an audience. NEVER emit
+1. **Advisory-only for classifier judgments; a prompt for code rules.** Hook output may be: nothing,
+   `additionalContext` (a note), `deny` (a tripwire), Stop `decision:"block"`, a `systemMessage`
+   (a gate error notice), or `ask`. A model, lint or commit trip emits `ask` **only** under the
+   explicit `ask_on_trip` setting. A code-rule (pattern) trip emits `ask` by default
+   (`pattern_trips: ask`, since 0.7): the user approves or refuses it, and a `# jev:intended`
+   marker from the agent is refused (`marker-refused`/`affirm-refused`) rather than honoured;
+   `pattern_trips: deny` always denies, `advisory` restores the affirmable pre-0.7 behaviour.
+   Either kind of `ask` is emitted only in a permission mode where a prompt has an audience;
+   elsewhere it is a `deny`. NEVER emit
    `permissionDecision: "allow"`: Jev is not injection-hardened, so its judgment must
    never grant permission, and `EscalatingDecision = "ask" | "deny"` keeps the case
    unrepresentable. A deny's text rides in `permissionDecisionReason`, never in
    `additionalContext` beside it — Claude Code drops `additionalContext` when the call
    is blocked. (0.3.0 reworded this invariant; the prohibition on `allow` is unchanged.)
-2. **Fail open, silently.** No API key, timeout, network/API error, malformed stdin, any thrown
-   error -> exit 0 with empty stdout. Log the error to the decision log only. Never exit 2.
+2. **Fail open, and say so.** No API key, timeout, network/API error, malformed stdin, any thrown
+   error -> exit 0, never a `deny`, never a prompt, never exit 2. Log the error to the decision log.
+   Since 0.7 a PreToolUse judgment that errors or times out (daemon up) also returns a
+   `systemMessage` telling the user the call went through unjudged, at most once per session per
+   10 minutes (`gate_error_notice_at`); nothing is promised with no daemon, where Claude Code drops
+   a refused http hook silently and SessionStart reports the daemon trouble.
 3. **stdout is protocol.** Only the single JSON object (or nothing). Diagnostics -> log file.
 4. **Code before model.** Deterministic prefilters decide whether Jev is called at all.
    Numbers/counters/time compared in code, never by Jev.
@@ -105,7 +114,7 @@ Mirror the `Brainwires/fable-lite` plugin for manifest/marketplace/skill house s
 
 ## Hooks
 
-### PreToolUse — matcher `Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*`
+### PreToolUse — matcher `Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__.*`
 Skip entirely if gate=off, session disabled, or tool is one of this plugin's own jev tools.
 Prefilter (pure function, heavily unit-tested), returns `skip | judge | escalate | affirm`:
 - Bash: tokenize conservatively. `skip` only if EVERY segment of the pipeline/`&&`/`;` chain is in a
@@ -113,10 +122,17 @@ Prefilter (pure function, heavily unit-tested), returns `skip | judge | escalate
   redirect, which, file, stat, du, df, ps, env-less `git status|log|diff|show|branch|remote -v|rev-parse`,
   node/npm/pnpm/cargo/go/pytest/vitest/tsc test|build|lint|type-check style commands, etc.) AND there is
   no output redirect (`>`, `>>`, `tee`), no `$(`/backtick substitution, no `sudo`, no `curl|wget … | sh`.
-  Anything else -> `judge`. When unsure -> `judge`. Hard patterns that skip Jev and go straight to `ask`
-  (code is more reliable than a model here): `rm -rf` on `/`, `~`, `$HOME` or `..`-escaping paths;
-  `git push --force`/`-f` to main|master; `git reset --hard`; `DROP TABLE|DATABASE`; `mkfs`; `dd of=/dev/`;
-  `chmod -R 777`; `:(){`.
+  Anything else -> `judge`. When unsure -> `judge`. Hard patterns that skip Jev and go straight to a
+  code-rule trip (`escalate`; code is more reliable than a model here): `rm -rf` on `/`, `~`, `~user`,
+  `$HOME`, `/Users/<n>`, `/home/<n>`, `/root`, any depth-1 absolute path, or `..`-escaping paths, plus
+  `find <wide> … -delete|-exec rm` and `rm -rf *|.` after a `cd` to a wide target; `git push` with
+  `--force`/`-f`/`--force-with-lease`/`--force-if-includes` or a `+` refspec to main|master; `git reset
+  --hard`; `DROP TABLE|DATABASE`; `mkfs`; `dd of=/dev/`; recursive `chmod` to any world-writable mode;
+  `:(){`; and `jev-self-disable` (`hook.mjs disable`, `daemon-ctl stop|restart`, `claude plugin
+  disable|uninstall|remove`, a write into the plugin's data directory, its installed files or the plugin
+  registry, or a settings edit naming jev/hooks/plugins). All of them are matched through `sudo`, `env`,
+  `command`, `exec`, `nice`, `nohup`, `time`, `timeout`, `stdbuf`, `ionice`, `chrt`, `xargs`, `busybox`
+  and friends, and inside `sh -c`/`eval` strings to three levels. (0.7: issue #6.)
 - Write/Edit/MultiEdit/NotebookEdit: `skip` if file path resolves inside `cwd` and is not sensitive
   (.env*, *.pem, id_rsa*, .ssh/, .aws/, .git/ internals, shell rc files, **/.claude/settings*.json).
   Sensitive or outside cwd -> `judge`.
@@ -137,11 +153,13 @@ are the pure function `gateOutcome` in `src/hooks/advisory.ts`; the wording is
 | # | Condition | Outcome | Hook output | Log `decision` |
 |---|---|---|---|---|
 | 1 | Prefilter `skip` | silent | none | (none) |
-| 2 | Hard pattern (`escalate`), no open trip match | **trip** | `deny`, pattern-trip text | `trip` (`source:"pattern"`) |
-| 3 | Open trip, same fingerprint, **affirmed** (inline marker >= 12 chars, or a prior sidecar affirm) | pass | none (no judging, no model call) | `reissue` |
-| 4 | Open trip, same fingerprint, **not affirmed** | trip again | `deny`, repeat text | `trip-repeat` |
+| 2 | Hard pattern (`escalate`), no open trip match | **trip** | `ask` under `pattern_trips: ask` (default) in an interactive mode, else `deny`; pattern-trip text that invites a marker only under `advisory` | `trip` (`source:"pattern"`) |
+| 3 | Open trip, same fingerprint, **affirmed** (inline marker >= 12 chars, or a prior sidecar affirm) — classifier trips, and pattern trips only under `pattern_trips: advisory` | pass | none (no judging, no model call) | `reissue` |
+| 3a | Open **pattern** trip with a marker, `pattern_trips` not `advisory` | trip again, marker refused | same channel as row 2, text says the marker cleared nothing | `marker-refused` (sidecar form: `affirm-refused`, nothing emitted) |
+| 4 | Open trip, same fingerprint, **not affirmed** | trip again | row 2's channel, repeat text | `trip-repeat` |
 | 5 | Marker present but no open trip matches | judged normally with the marker stripped | per row | extra `marker-unmatched` |
-| 6 | No model / error / timeout | silent | none | `error` or nothing |
+| 6 | No model | silent | none | nothing |
+| 6a | Error / timeout | silent to the agent, one `systemMessage` to the user per 10 min | `systemMessage` only | `error` (+ `emitted` when the notice went out) |
 | 7 | Policy `block` (out_of_scope AND (destructive firm OR outward firm AND NOT requested)) | **trip** | `deny`, model-trip text | `trip` (`source:"model"`) |
 | 8 | Policy `allow` | silent | none | `allow` |
 | 9 | `credential_exposure` firm | **note** | `additionalContext` | `note` |
@@ -154,7 +172,8 @@ are the pure function `gateOutcome` in `src/hooks/advisory.ts`; the wording is
 | 16 | Rows 9-12 hit, same fingerprint already noted this session (30 min) | silent | none | `silent-dup` |
 | 17 | Rows 9-12 hit, >= 5 notes since the last user prompt | silent | none | `silent-cap` |
 | 18 | `gate: strict` | rows 13 and 14 become **note** (row 15 stays silent: an uncertain reason is never printed); in-project edits are judged | | |
-| 19 | `ask_on_trip: true` AND permission_mode not in {dontAsk, bypassPermissions} | rows 2, 4, 7 emit `ask` instead of `deny`, same text | `ask` | `trip` with `channel:"ask"` |
+| 19 | `ask_on_trip: true` AND permission_mode not in {dontAsk, bypassPermissions} | row 7 (and rows 2, 4 only under `pattern_trips: advisory`) emits `ask` instead of `deny`, same text | `ask` | `trip` with `channel:"ask"` |
+| 20 | `pattern_trips` (default `ask`) | decides rows 2, 3a, 4 for `source:"pattern"`: `ask` prompts the user (deny in promptless modes), `deny` always denies, `advisory` makes them row 3 affirmable; `"ask"` is produced by one expression, `tripChannel`, guarded by both settings | | |
 
 **Tripwire.** `fingerprint = sha256(tool_name + "\0" + canonical)[0:16]`, `trip_id = "t-" + fp[0:8]`.
 Bash canonical = marker stripped, CRLF normalized, trimmed; file tools = canonical JSON (sorted keys) of

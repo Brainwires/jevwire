@@ -12,7 +12,7 @@
 import { USD_PER_MTOK } from "../decision/pricing.js";
 import { gateActionPolicy, type GateActionSignals } from "../tools/gate-action-core.js";
 import { gateOutcome, MAX_NOTES_PER_PROMPT } from "./advisory.js";
-import type { HookConfig } from "./config.js";
+import type { HookConfig, PatternTripPolicy } from "./config.js";
 import { isAlive, probeHealth, type Health, type Probe } from "./daemon/control.js";
 import { PROTOCOL } from "./daemon/protocol.js";
 import { daemonLogPath, readDaemonState, type DaemonState } from "./daemon/state-file.js";
@@ -21,6 +21,13 @@ import type { DecisionRecord, Store } from "./store.js";
 /** TypeSafe bills input tokens only. Defined in `src/decision/pricing.ts`. */
 export { USD_PER_MTOK };
 const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** What each `pattern_trips` value means, as the status line says it. */
+const PATTERN_TRIP_NOTES: Record<PatternTripPolicy, string> = {
+  ask: " (a code-rule trip asks the user; denied where no prompt is shown)",
+  deny: " (a code-rule trip is always denied; no marker clears it)",
+  advisory: " (a code-rule trip denies to Claude, which may re-issue it with a marker)",
+};
 
 function percentile(values: number[], p: number): number {
   if (values.length === 0) return 0;
@@ -225,7 +232,8 @@ export function statusReport(
     `  model: ${config.model}`,
     `  base url: ${config.baseUrl}`,
     `  gate: ${config.gate}`,
-    `  ask_on_trip: ${config.askOnTrip}${config.askOnTrip ? "" : " (a tripwire denies to Claude; the user is not prompted)"}`,
+    `  ask_on_trip: ${config.askOnTrip}${config.askOnTrip ? "" : " (a classifier tripwire denies to Claude; the user is not prompted)"}`,
+    `  pattern_trips: ${config.patternTrips}${PATTERN_TRIP_NOTES[config.patternTrips]}`,
     `  stop_check: ${config.stopCheck}   screen_results: ${config.screenResults}   route_prompts: ${config.routePrompts}`,
     `  thresholds: auto ${config.autoThreshold}, review ${config.reviewThreshold}, choice confidence ${config.confidenceThreshold}`,
     `  per-call timeout: ${config.timeoutMs} ms, retries: ${config.maxRetries}`,
@@ -281,9 +289,12 @@ export function statusReport(
 }
 
 /** What `/jev:why` shows with no filter: everything the agent was told, plus errors. */
-const WHY_ALL = ["note", "trip", "trip-repeat", "reissue", "affirm", "error"];
-/** `/jev:why <n> trips`: the tripwire story, including how each trip ended. */
-const WHY_TRIPS = ["trip", "trip-repeat", "reissue", "affirm", "reissue-ran", "reissue-failed"];
+const WHY_ALL = ["note", "trip", "trip-repeat", "reissue", "affirm", "marker-refused", "affirm-refused", "error"];
+/**
+ * `/jev:why <n> trips`: the tripwire story, including how each trip ended —
+ * and, for a code-rule trip, the markers the agent wrote that cleared nothing.
+ */
+const WHY_TRIPS = ["trip", "trip-repeat", "reissue", "affirm", "marker-refused", "affirm-refused", "reissue-ran", "reissue-failed"];
 
 export type WhyFilter = "all" | "notes" | "trips";
 

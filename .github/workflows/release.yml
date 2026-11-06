@@ -1,0 +1,69 @@
+name: release
+
+# Publishes to npm when a `v*` tag is pushed, after the same checks CI runs.
+#
+# Authentication is npm trusted publishing (GitHub OIDC): no npm token is
+# stored in this repository. The package must name this repository and this
+# workflow file as its trusted publisher on npmjs.com (package settings →
+# Trusted Publisher → GitHub Actions). Publishing this way also attaches a
+# provenance attestation, so npm shows which commit and workflow built each
+# version.
+#
+# Release flow: `npm run bump -- X.Y.Z`, commit, `git tag vX.Y.Z`, push the tag.
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write # create the GitHub release
+  id-token: write # OIDC token for npm trusted publishing and provenance
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    environment: npm
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          registry-url: https://registry.npmjs.org
+          cache: npm
+
+      # Trusted publishing needs npm 11.5.1 or newer; Node 22 ships with npm 10.
+      - run: npm install -g npm@11.6.2
+
+      - name: tag matches package.json
+        run: |
+          tag="${GITHUB_REF_NAME#v}"
+          pkg="$(node -p 'require("./package.json").version')"
+          echo "tag=$tag package.json=$pkg"
+          test "$tag" = "$pkg"
+
+      - run: npm ci
+      - run: npm run type-check
+      - run: npm run test:run
+      - run: npm run build
+
+      # What gets published must be what is committed at this tag.
+      - name: working tree is clean after build
+        run: git diff --exit-code
+
+      - name: publish
+        run: |
+          version="$(node -p 'require("./package.json").version')"
+          case "$version" in
+            *-*) npm publish --provenance --access public --tag next ;;
+            *)   npm publish --provenance --access public ;;
+          esac
+
+      - name: GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release create "$GITHUB_REF_NAME" --verify-tag --generate-notes --title "$GITHUB_REF_NAME"
