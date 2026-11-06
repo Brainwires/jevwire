@@ -67,10 +67,34 @@ describe("loadHookConfig", () => {
     expect(config.warnings.join(" ")).toContain("gate=");
   });
 
-  it("reads ask_on_trip, the one setting that can prompt a human", () => {
+  it("reads ask_on_trip, the setting that lets a classifier trip prompt a human", () => {
     expect(loadHookConfig({ CLAUDE_PLUGIN_OPTION_ASK_ON_TRIP: "true" }).askOnTrip).toBe(true);
     expect(loadHookConfig({ JEV_ASK_ON_TRIP: "1" }).askOnTrip).toBe(true);
     expect(loadHookConfig({}).askOnTrip).toBe(false);
+  });
+
+  /**
+   * `pattern_trips` decides who clears a code-rule trip. The default is the
+   * secure one, and a value that is not understood falls back to it rather
+   * than to the permissive one.
+   */
+  it("reads pattern_trips, defaulting to ask and warning on a bad value", () => {
+    expect(loadHookConfig({}).patternTrips).toBe("ask");
+    expect(HOOK_DEFAULTS.patternTrips).toBe("ask");
+    expect(loadHookConfig({ CLAUDE_PLUGIN_OPTION_PATTERN_TRIPS: "deny" }).patternTrips).toBe("deny");
+    expect(loadHookConfig({ CLAUDE_PLUGIN_OPTION_PATTERN_TRIPS: "Advisory" }).patternTrips).toBe("advisory");
+    expect(loadHookConfig({ JEV_PATTERN_TRIPS: "advisory" }).patternTrips).toBe("advisory");
+    const bad = loadHookConfig({ JEV_PATTERN_TRIPS: "maybe" });
+    expect(bad.patternTrips).toBe("ask");
+    expect(bad.warnings.join(" ")).toContain("pattern_trips=");
+  });
+
+  it("carries pattern_trips through the daemon's session snapshot, falling back to the secure default", () => {
+    const own = sessionConfigOf(loadHookConfig({}));
+    expect(readSessionConfig(sessionConfigOf(loadHookConfig({ JEV_PATTERN_TRIPS: "advisory" })), own)?.patternTrips).toBe("advisory");
+    expect(readSessionConfig({ ...own, patternTrips: "whatever" }, own)?.patternTrips).toBe("ask");
+    const { patternTrips: _dropped, ...legacy } = own;
+    expect(readSessionConfig(legacy, own)?.patternTrips).toBe("ask");
   });
 
   /**

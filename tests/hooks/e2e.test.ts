@@ -78,7 +78,7 @@ describe("node plugin/dist/hook.mjs", () => {
     expect(run.stdout).toBe("");
   });
 
-  it("trips a hard pattern with no API key at all, and denies rather than prompting", async () => {
+  it("trips a hard pattern with no API key at all, and asks the user by default", async () => {
     const run = await runHook(
       ["PreToolUse"],
       JSON.stringify({ ...PRE, tool_input: { command: "rm -rf ~/" } }),
@@ -88,7 +88,7 @@ describe("node plugin/dist/hook.mjs", () => {
     const parsed = JSON.parse(run.stdout) as {
       hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string };
     };
-    expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("ask");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("[jev] tripwire t-");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("no model was consulted");
     expect(Object.keys(parsed.hookSpecificOutput)).toEqual([
@@ -105,13 +105,32 @@ describe("node plugin/dist/hook.mjs", () => {
    * Four separate processes with nothing in common but the data directory,
    * which is the real arrangement — every hook invocation is a fresh `node`.
    */
-  it("passes a re-issue carrying a marker, and says nothing the second time", async () => {
+  it("refuses a marker on a code-rule trip by default, through the real bundle", async () => {
     const command = "rm -rf ~/";
     const first = await runHook(["PreToolUse"], JSON.stringify({ ...PRE, tool_input: { command } }), env);
+    expect(first.stdout).toContain('"permissionDecision":"ask"');
+    const reissue = await runHook(
+      ["PreToolUse"],
+      JSON.stringify({
+        ...PRE,
+        tool_input: { command: `${command} # jev:intended the request says "clear the old home backup"` },
+      }),
+      env,
+    );
+    expect(reissue.code).toBe(0);
+    expect(reissue.stdout).toContain('"permissionDecision":"ask"');
+    expect(reissue.stdout).toContain("did not clear it");
+  }, 30_000);
+
+  it("passes a re-issue carrying a marker under pattern_trips: advisory, and says nothing the second time", async () => {
+    const advisory = { ...env, JEV_PATTERN_TRIPS: "advisory" };
+    const command = "rm -rf ~/";
+    const first = await runHook(["PreToolUse"], JSON.stringify({ ...PRE, tool_input: { command } }), advisory);
     const tripId = /tripwire (t-[0-9a-f]{8})/.exec(first.stdout)?.[1];
     expect(tripId, first.stdout).toBeDefined();
+    expect(first.stdout).toContain('"permissionDecision":"deny"');
 
-    const again = await runHook(["PreToolUse"], JSON.stringify({ ...PRE, tool_input: { command } }), env);
+    const again = await runHook(["PreToolUse"], JSON.stringify({ ...PRE, tool_input: { command } }), advisory);
     expect(again.stdout).toContain("(attempt 2)");
 
     const reissue = await runHook(
@@ -120,7 +139,7 @@ describe("node plugin/dist/hook.mjs", () => {
         ...PRE,
         tool_input: { command: `${command} # jev:intended the request says "clear the old home backup"` },
       }),
-      env,
+      advisory,
     );
     expect(reissue.code).toBe(0);
     expect(reissue.stdout).toBe("");

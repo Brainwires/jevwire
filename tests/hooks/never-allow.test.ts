@@ -1,14 +1,18 @@
 /**
- * Invariant 1: never allow, and by default never ask.
+ * Invariant 1: never allow, and ask only where a setting says so.
  *
  * Two promises, checked five ways, because these are the properties whose
  * failure would turn the plugin from "sometimes noisy" into "actively harmful"
  * or into the thing 0.3 exists to remove:
  *
  *  1. No source file under `src/hooks` mentions an `allow` permission decision.
- *  2. `"ask"` is produced in exactly one expression, guarded by `askOnTrip`.
+ *  2. `"ask"` is produced in exactly one expression, guarded by `askOnTrip`
+ *     and `patternTrips` — the two settings that can put a prompt in front
+ *     of the user, and nothing else.
  *  3. No handler, driven by a fuzzed model over every mode and tool, ever
- *     produces `"allow"` — or, with the default config, `"ask"`.
+ *     produces `"allow"`. With the default config, an `ask` comes only from a
+ *     code-rule trip (`pattern_trips: ask`, since 0.7) and only in an
+ *     interactive mode; with `pattern_trips: advisory` it never asks at all.
  *  4. With `ask_on_trip` set, an `ask` appears only in an interactive mode and
  *     only carrying a tripwire reason.
  *  5. The shipped bundle contains no `allow` decision either.
@@ -78,7 +82,13 @@ describe("no source path can emit permissionDecision allow", () => {
  * count is pinned rather than the behaviour alone.
  */
 describe("ask is reachable from exactly one expression", () => {
-  const files = sourceFiles(HOOK_SRC).filter((file) => !file.endsWith("types.ts"));
+  /**
+   * `types.ts` declares the decision's type; `config.ts` declares the
+   * `pattern_trips` values a user may set (`PATTERN_TRIP_POLICIES`). Neither
+   * can produce a decision. Everything else — the handlers, the wording, the
+   * daemon, the reports — is held to the single site.
+   */
+  const files = sourceFiles(HOOK_SRC).filter((file) => !file.endsWith("types.ts") && !file.endsWith("/config.ts"));
 
   /**
    * A union member in the log schema (`channel?: "note" | "deny" | "ask"`)
@@ -97,11 +107,14 @@ describe("ask is reachable from exactly one expression", () => {
     expect(sites).toEqual(["handlers/pre-tool-use.ts"]);
   });
 
-  it("guards that expression with the ask_on_trip setting", () => {
+  it("guards that expression with the ask_on_trip and pattern_trips settings, and nothing else", () => {
     const code = strip(readFileSync(join(HOOK_SRC, "handlers/pre-tool-use.ts"), "utf8"));
-    const line = code.split("\n").find((text) => /["']ask["']/.test(text));
-    expect(line).toBeDefined();
+    const lines = code.split("\n").filter((text) => /["']ask["']/.test(text));
+    expect(lines).toHaveLength(1);
+    const line = lines[0] as string;
     expect(line).toContain("askOnTrip");
+    expect(line).toContain("patternTrips");
+    expect(line).toContain("PROMPTLESS_MODES");
   });
 
   it("names the modes where a prompt has no audience", () => {
@@ -196,14 +209,20 @@ describe("no handler output contains allow, and none asks by default", () => {
     };
   }
 
-  it("holds across every handler, mode, tool and answer shape", async () => {
+  /**
+   * Drive every handler, mode, tool and answer shape through one config.
+   * Returns every `ask` seen, keyed by handler/mode/tool, for the caller to
+   * judge; `allow` is asserted absent here, unconditionally.
+   */
+  async function fuzz(config: Record<string, unknown>): Promise<{ checked: number; asked: Map<string, string> }> {
     let checked = 0;
+    const asked = new Map<string, string>();
     // One rig, a swappable responder: the property is about the output, and
     // rebuilding a store per iteration would make this an I/O benchmark.
     let respond: () => Record<string, Answer> = () => ({});
     const deps = makeDeps(dir, {
       model: new FakeModel(() => respond()),
-      config: { routePrompts: true },
+      config: { routePrompts: true, ...config },
     });
 
     for (const [name, handler] of HANDLERS) {
@@ -217,14 +236,45 @@ describe("no handler output contains allow, and none asks by default", () => {
             expect(serialized, `${name}/${mode}/${tool}`).not.toContain('"allow"');
             expect(serialized, `${name}/${mode}/${tool}`).not.toContain('permissionDecision":"allow');
             const decision = output?.hookSpecificOutput?.permissionDecision;
-            // The default configuration never prompts anybody.
-            if (decision !== undefined) expect(decision, `${name}/${mode}/${tool}`).toBe("deny");
+            if (decision !== undefined) expect(["ask", "deny"], `${name}/${mode}/${tool}`).toContain(decision);
+            if (decision === "ask") {
+              asked.set(`${name}/${mode}/${tool}`, output?.hookSpecificOutput?.permissionDecisionReason ?? "");
+            }
             checked += 1;
           }
         }
       }
     }
     expect(checked).toBeGreaterThan(500);
+    return { checked, asked };
+  }
+
+  it("holds across every handler, mode, tool and answer shape, asking only about a code rule by default", async () => {
+    const { asked } = await fuzz({});
+    // Since 0.7 the default `pattern_trips: ask` puts `rm -rf /` in front of
+    // the user. That is the only ask the default configuration can produce:
+    // PreToolUse, a code-rule reason, an interactive mode.
+    expect(asked.size).toBeGreaterThan(0);
+    for (const [where, reason] of asked) {
+      expect(where, where).toMatch(/^PreToolUse\//);
+      expect(where, where).not.toMatch(/\/(dontAsk|bypassPermissions)\//);
+      expect(reason, where).toContain("[jev] tripwire");
+      expect(reason, where).toContain("code rule");
+      // The prompt never teaches the agent the marker: no invitation to
+      // re-run with one. (A refused marker is named, as a fact.)
+      expect(reason, where).not.toContain("re-runnable unchanged");
+      expect(reason, where).toContain("cleared by the user, not by a marker");
+    }
+  }, 60_000);
+
+  it("never asks at all with pattern_trips: advisory, which is the pre-0.7 contract", async () => {
+    const { asked } = await fuzz({ patternTrips: "advisory" });
+    expect([...asked.keys()]).toEqual([]);
+  }, 60_000);
+
+  it("never asks with pattern_trips: deny either", async () => {
+    const { asked } = await fuzz({ patternTrips: "deny" });
+    expect([...asked.keys()]).toEqual([]);
   }, 60_000);
 
   it("asks only in an interactive mode, and only about a tripwire, with ask_on_trip", async () => {

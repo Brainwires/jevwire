@@ -28,7 +28,7 @@ afterEach(() => {
 describe("runEvent", () => {
   it("dispatches a known event", async () => {
     const output = await runEvent("PreToolUse", PRE, makeDeps(dir));
-    expect(output?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(output?.hookSpecificOutput?.permissionDecision).toBe("ask");
     expect(output?.hookSpecificOutput?.permissionDecisionReason).toContain("[jev] tripwire");
   });
 

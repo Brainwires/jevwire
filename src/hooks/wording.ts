@@ -19,6 +19,7 @@
 import type { FirmReason } from "./advisory.js";
 import type { GateActionSignals } from "../tools/gate-action-core.js";
 import { compactJson, redactAndClamp } from "./redact.js";
+import type { EscalatingDecision } from "./types.js";
 
 /** Longest `{subject}` — the redacted head of the command or path. */
 export const MAX_SUBJECT_CHARS = 80;
@@ -255,23 +256,92 @@ export function modelTripText(input: ModelTripInput): string {
   );
 }
 
-/** A pattern trip: certain by construction, and no model was consulted. */
-export function patternTripText(input: { id: string; pattern: string; reason: string }): string {
+/**
+ * Who a code-rule trip waits on, as the text has to say it.
+ *
+ * `advisory`: the agent, with a marker. `ask`: the user, in the permission
+ * prompt Claude Code is showing. `deny`: the user, but there is no prompt in
+ * this mode, so the only ways forward are outside the agent.
+ */
+export type PatternTripNeeds = "advisory" | EscalatingDecision;
+
+/**
+ * The sentence that says what clears a code-rule trip under `needs`.
+ *
+ * Branched on `advisory` and `deny` with the prompt case last, so that the
+ * hook source keeps a single line that spells the prompt decision
+ * (`tests/hooks/never-allow.test.ts`).
+ */
+function patternTripWayForward(needs: PatternTripNeeds, tool: string, id: string): string {
+  if (needs === "advisory") {
+    return (
+      `It is re-runnable unchanged with \`# jev:intended <the sentence of the user's request that ` +
+      `requires this exact ${tool === "Bash" ? "command" : "call"}>\` on its last line` +
+      (tool === "Bash" ? "" : `, or, for this tool, after a separate Bash call \`true # jev:intended ${id}: <that sentence>\``) +
+      `; it then passes this hook and Claude Code's own permission rules still apply. Marker text is ` +
+      `recorded and shown to the user by /jev:why.`
+    );
+  }
+  if (needs === "deny") {
+    return (
+      `A code-rule trip is cleared by the user, not by a marker, and no prompt is shown in this mode. ` +
+      `This one needs the user: it is runnable by them directly, or by the agent after they change ` +
+      `pattern_trips in the plugin settings. A narrower action needs no approval.`
+    );
+  }
   return (
-    `[jev] tripwire ${input.id}: this Bash call was not run because it matched the code rule ` +
-    `"${input.pattern}" (${input.reason}); no model was consulted. It is re-runnable unchanged with ` +
-    `\`# jev:intended <the sentence of the user's request that requires this exact command>\` on its ` +
-    `last line; it then passes this hook and Claude Code's own permission rules still apply. Marker ` +
-    `text is recorded and shown to the user by /jev:why.`
+    `A code-rule trip is cleared by the user, not by a marker: Claude Code is asking the user to ` +
+    `approve or refuse this exact call now. A narrower action needs no approval.`
   );
 }
 
-/** The same call, again, still unaffirmed. Short: it has all been said once. */
-export function tripRepeatText(input: { id: string; attempt: number; seconds: number }): string {
+/**
+ * A pattern trip: certain by construction, and no model was consulted.
+ *
+ * `needs` decides the second half. Under the default (`ask`) the text invites
+ * no marker, because a marker would not clear it; `markerRefused` is the
+ * re-issue that carried one anyway, and says so.
+ */
+export function patternTripText(input: {
+  id: string;
+  pattern: string;
+  reason: string;
+  needs?: PatternTripNeeds;
+  tool?: string;
+  markerRefused?: boolean;
+}): string {
+  const needs = input.needs ?? "advisory";
+  const tool = input.tool ?? "Bash";
+  const refused = input.markerRefused === true ? ` The \`# jev:intended\` marker on this re-issue was recorded and did not clear it.` : "";
   return (
-    `[jev] tripwire ${input.id} (attempt ${input.attempt}): identical to the call denied ` +
-    `${Math.max(0, Math.round(input.seconds))}s ago and still without a marker. It passes only with ` +
-    `\`# jev:intended <why the user's request requires this>\` (or the sidecar form for non-Bash tools).`
+    `[jev] tripwire ${input.id}: this ${tool} call was not run because it matched the code rule ` +
+    `"${input.pattern}" (${input.reason}); no model was consulted.${refused} ${patternTripWayForward(needs, tool, input.id)}`
+  );
+}
+
+/**
+ * The same call, again, still unaffirmed. Short: it has all been said once.
+ *
+ * `needs` is set for a code-rule trip the agent cannot clear, so the repeat
+ * does not invite the marker the first text did not invite either.
+ */
+export function tripRepeatText(input: { id: string; attempt: number; seconds: number; needs?: PatternTripNeeds }): string {
+  const ago = `${Math.max(0, Math.round(input.seconds))}s ago`;
+  const needs = input.needs ?? "advisory";
+  if (needs === "advisory") {
+    return (
+      `[jev] tripwire ${input.id} (attempt ${input.attempt}): identical to the call denied ${ago} and still ` +
+      `without a marker. It passes only with \`# jev:intended <why the user's request requires this>\` ` +
+      `(or the sidecar form for non-Bash tools).`
+    );
+  }
+  return (
+    `[jev] tripwire ${input.id} (attempt ${input.attempt}): identical to the call denied ${ago}. A code-rule ` +
+    `trip is cleared by the user, not by a marker` +
+    (needs === "deny"
+      ? `, and no prompt is shown in this mode: it is runnable by the user directly, or by the agent after ` +
+        `they change pattern_trips in the plugin settings.`
+      : `; Claude Code is asking the user now.`)
   );
 }
 
@@ -422,6 +492,22 @@ export function contradictionNoteText(input: { tool: string; p: number }): strin
     `[jev] This ${input.tool} result was scored as stating something that conflicts with an assumption in ` +
     `the request (contradicts_premise=${p(input.p)}) by the jev classifier: the text and the last user ` +
     `prompt disagree about a fact. Source: jev classifier, literal reading of the result and the prompt only.`
+  );
+}
+
+/**
+ * The gate could not get a judgment and let the call through.
+ *
+ * For the user, not the agent: the call is already running, and the point is
+ * that nobody looked at it. `cause` is the error's name, or `timeout` when
+ * the hook's own deadline cut the call off, which is the common case and the
+ * one worth reporting. Rate-limited by the caller, so a dead API does not
+ * say this on every tool call.
+ */
+export function gateErrorSystemMessage(input: { cause: string }): string {
+  return (
+    `[jev] The tool gate could not get a judgment (${input.cause}), so this call went through unjudged. ` +
+    `Pattern trips still apply. /jev:status shows the last error.`
   );
 }
 

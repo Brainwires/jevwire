@@ -224,6 +224,26 @@ describe("whyReport", () => {
     expect(report).toContain("driven by: destructive");
   });
 
+  it("shows a refused marker on a code-rule trip, with the marker text, in both views", () => {
+    store.append(patternTrip("rm-rf-wide"));
+    store.append(
+      record({
+        decision: "marker-refused",
+        trip_id: "t-aaaaaaaa",
+        source: "pattern",
+        channel: "ask",
+        affirmation: "the user asked for a clean home directory",
+      }),
+    );
+    store.append(record({ decision: "affirm-refused", trip_id: "t-aaaaaaaa", source: "pattern", affirmation: "sidecar text" }));
+    for (const filter of ["all", "trips"] as const) {
+      const report = whyReport(store, 3, filter);
+      expect(report, filter).toContain("→  marker-refused");
+      expect(report, filter).toContain("marker text: the user asked for a clean home directory");
+      expect(report, filter).toContain("→  affirm-refused");
+    }
+  });
+
   it("prints the trip id and its source", () => {
     store.append(patternTrip("fork bomb"));
     const report = whyReport(store, 1);

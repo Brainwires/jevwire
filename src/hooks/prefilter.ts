@@ -273,6 +273,17 @@ export function scanBash(command: string): BashScan {
         index += 2;
         continue;
       }
+      if (command[index + 1] === "{") {
+        // `${HOME}/x` is one word. Without this the braces read as a group
+        // and the word fell apart into `$`, `HOME`, `/x`.
+        const close = command.indexOf("}", index + 2);
+        if (close !== -1) {
+          features.expansion = true;
+          push(command.slice(index, close + 1));
+          index = close + 1;
+          continue;
+        }
+      }
       features.expansion = true;
       push(char);
       index += 1;
@@ -380,6 +391,14 @@ export function scanBash(command: string): BashScan {
       continue;
     }
 
+    if (char === "{" && command[index + 1] === "}") {
+      // `{}` is not a group: the shell leaves empty braces alone, and it is
+      // the placeholder `xargs -I {}` and `find -exec … {}` take as a word.
+      push("{}");
+      index += 2;
+      continue;
+    }
+
     if (char === "(" || char === ")" || char === "{" || char === "}") {
       // `(subshell)`, `{ group; }`, and function definitions are structure this
       // scanner does not model. Flag and move on; the caller will judge.
@@ -420,8 +439,111 @@ function escapesUp(target: string): boolean {
   return target.split("/").includes("..");
 }
 
+/** `~`, `~user`, `$HOME`, with or without a trailing `/` or `/*`. */
 function isHomeish(target: string): boolean {
-  return /^(~|\$HOME|\$\{HOME\})(\/\*?)?$/.test(target);
+  return /^(~[A-Za-z0-9._-]*|\$HOME|\$\{HOME\})(\/\*?)?$/.test(target);
+}
+
+/** A home directory spelled out: `/Users/<name>`, `/home/<name>`, `/root`. */
+function isHomeDir(target: string): boolean {
+  return /^\/(?:(?:Users|home)\/[^/]+|root)\/?\*?$/.test(target);
+}
+
+/**
+ * An absolute path one segment deep: `/usr`, `/etc/`, `/var/*`, `/System`.
+ * Deleting any of them recursively takes a system apart, so none is treated
+ * as ordinary. `/tmp` is depth one too and is accepted as a false positive:
+ * the trip is re-runnable with a marker, and `rm -rf /tmp` is rare enough.
+ */
+function isTopLevel(target: string): boolean {
+  return /^\/[^/*]+\/?\*?$/.test(target);
+}
+
+/** A delete operand that reaches far beyond a project. */
+function isWideTarget(target: string): boolean {
+  return isRoot(target) || isHomeish(target) || isHomeDir(target) || isTopLevel(target) || escapesUp(target);
+}
+
+/** Is a chmod mode operand one that makes files world-writable? */
+function isWorldWritableMode(mode: string): boolean {
+  // Octal: the last digit is "other", and bit 2 is write. 777, 0777, 666,
+  // 757, 1777 all set it; 755 and 644 do not.
+  if (/^[0-7]{3,4}$/.test(mode)) return /[2367]$/.test(mode);
+  // Symbolic, possibly a comma list: a clause granting `w` to `o` or `a`.
+  // A clause with no who (`+w`) applies the umask and is left alone.
+  return mode.split(",").some((clause) => {
+    const match = /^([ugoa]+)([+=])([rwxXst]*)$/.exec(clause);
+    return match !== null && /[oa]/.test(match[1] as string) && (match[3] as string).includes("w");
+  });
+}
+
+const RM_RF_WIDE_REASON = "recursive delete of a home, root, or parent-escaping path";
+
+/** The operands of a recursive `rm`, or `undefined` when this is not one. */
+function recursiveRmOperands(tokens: string[]): string[] | undefined {
+  if (commandOf(tokens) !== "rm") return undefined;
+  const operands: string[] = [];
+  let recursive = false;
+  for (const token of tokens.slice(indexOfCommand(tokens) + 1)) {
+    if (token.startsWith("--")) {
+      if (token === "--recursive") recursive = true;
+      continue;
+    }
+    if (token.startsWith("-") && token.length > 1) {
+      if (/[rR]/.test(token.slice(1))) recursive = true;
+      continue;
+    }
+    operands.push(token);
+  }
+  return recursive ? operands : undefined;
+}
+
+/** `rm -rf` of the current directory's contents: wide exactly when the cwd is. */
+const HERE = new Set(["*", ".", "./", "./*", ".//*"]);
+
+function rmHere(tokens: string[]): boolean {
+  const operands = recursiveRmOperands(tokens);
+  return operands !== undefined && operands.some((target) => HERE.has(target));
+}
+
+/**
+ * `find <wide> … -delete` and `find <wide> … -exec rm …` delete as widely as
+ * `rm -rf <wide>` does. The starting points are the operands before the first
+ * expression token; `find` with none starts at `.`, which is not wide.
+ */
+function findWideDelete(tokens: string[]): boolean {
+  if (commandOf(tokens) !== "find") return false;
+  const args = argsOf(tokens);
+  let index = 0;
+  while (index < args.length) {
+    const arg = args[index] as string;
+    if (arg === "-H" || arg === "-L" || arg === "-P" || arg.startsWith("-O")) index += 1;
+    else if (arg === "-D") index += 2;
+    else break;
+  }
+  const paths: string[] = [];
+  while (index < args.length && !/^[-(!]/.test(args[index] as string)) {
+    paths.push(args[index] as string);
+    index += 1;
+  }
+  if (!paths.some((path) => isWideTarget(path))) return false;
+  const expression = args.slice(index);
+  if (expression.includes("-delete")) return true;
+  return expression.some(
+    (arg, at) => ["-exec", "-execdir", "-ok", "-okdir"].includes(arg) && (expression[at + 1] ?? "").split("/").pop() === "rm",
+  );
+}
+
+/**
+ * Where a `cd` segment leaves the shell, as far as the next `rm -rf *` is
+ * concerned: `true` for a wide target or a bare `cd` (home), `false` for an
+ * ordinary directory and for `cd -`, whose destination this code cannot see.
+ */
+function cdLandsWide(tokens: string[]): boolean | undefined {
+  if (commandOf(tokens) !== "cd") return undefined;
+  const operand = argsOf(tokens).find((arg) => !arg.startsWith("-") || arg === "-");
+  if (operand === undefined) return true;
+  return operand !== "-" && isWideTarget(operand);
 }
 
 /** A single catastrophic-command check. */
@@ -434,25 +556,10 @@ interface HardPattern {
 const HARD_PATTERNS: HardPattern[] = [
   {
     name: "rm-rf-wide",
-    reason: "recursive delete of a home, root, or parent-escaping path",
+    reason: RM_RF_WIDE_REASON,
     matches: (tokens) => {
-      const command = commandOf(tokens);
-      if (command !== "rm") return false;
-      const operands: string[] = [];
-      let recursive = false;
-      for (const token of tokens.slice(indexOfCommand(tokens) + 1)) {
-        if (token.startsWith("--")) {
-          if (token === "--recursive") recursive = true;
-          continue;
-        }
-        if (token.startsWith("-") && token.length > 1) {
-          if (/[rR]/.test(token.slice(1))) recursive = true;
-          continue;
-        }
-        operands.push(token);
-      }
-      if (!recursive) return false;
-      return operands.some((target) => isRoot(target) || isHomeish(target) || escapesUp(target));
+      const operands = recursiveRmOperands(tokens);
+      return operands !== undefined && operands.some((target) => isWideTarget(target));
     },
   },
   {
@@ -460,7 +567,19 @@ const HARD_PATTERNS: HardPattern[] = [
     reason: "force push to a main branch",
     matches: (tokens) => {
       if (commandOf(tokens) !== "git" || !tokens.includes("push")) return false;
-      const forced = tokens.some((t) => t === "--force" || t === "-f" || /^-[a-zA-Z]*f[a-zA-Z]*$/.test(t));
+      // `+main` and `+HEAD:main` are refspecs with the force bit set, so they
+      // need no flag at all. `--force-with-lease` is still a rewrite of the
+      // remote branch; the lease only says whose history it overwrites.
+      if (tokens.some((t) => /^\+(?:.*[:/])?(main|master)$/.test(t))) return true;
+      const forced = tokens.some(
+        (t) =>
+          t === "--force" ||
+          t === "-f" ||
+          t === "--force-with-lease" ||
+          t.startsWith("--force-with-lease=") ||
+          t === "--force-if-includes" ||
+          /^-[a-zA-Z]*f[a-zA-Z]*$/.test(t),
+      );
       if (!forced) return false;
       return tokens.some((t) => /(^|[:/])(main|master)$/.test(t));
     },
@@ -491,8 +610,10 @@ const HARD_PATTERNS: HardPattern[] = [
     reason: "recursive world-writable permissions",
     matches: (tokens) => {
       if (commandOf(tokens) !== "chmod") return false;
-      const recursive = tokens.some((t) => t === "-R" || t === "-r" || t === "--recursive");
-      return recursive && tokens.some((t) => /^0?777$/.test(t) || /^a\+?rwx$/.test(t) || /^a=rwx$/.test(t));
+      // `-R` may sit in a cluster (`-fR`, `-Rv`). Uppercase only: chmod has no
+      // `-r` option, and `-r` as an operand means "remove read".
+      const recursive = tokens.some((t) => t === "--recursive" || /^-[a-zA-Z]*R[a-zA-Z]*$/.test(t));
+      return recursive && argsOf(tokens).some((t) => isWorldWritableMode(t));
     },
   },
   {
@@ -510,6 +631,189 @@ const RAW_HARD_PATTERNS: [string, string, RegExp][] = [
   ["fork-bomb", "fork bomb", /:\s*\(\s*\)\s*\{\s*:?\s*\|?/],
   ["dd-to-device", "dd writing straight to a device", /\bdd\b[^;|&]*\bof=["']?\/dev\//],
 ];
+
+// ------------------------------------------------- wrappers and shell strings
+
+/**
+ * A command that runs another command, and what of its own it puts in front.
+ *
+ * The hard patterns look at the command word, so `sudo rm -rf /` used to read
+ * as `sudo` and go to judgment — or, with no key or a timed-out call, through.
+ * Each wrapper here is stripped, together with its own options and operands,
+ * until what is left is the command it runs; the patterns then see that too.
+ *
+ * `valueFlags` are the options whose value is the next token, so that
+ * `sudo -u root rm` strips to `rm` and never to `root`. An attached value
+ * (`-n5`, `-I{}`) is one token and needs no entry. `operand` recognizes the
+ * wrapper's own positional, such as `timeout`'s duration or `chrt`'s priority.
+ */
+interface Wrapper {
+  valueFlags: ReadonlySet<string>;
+  operand?: (token: string) => boolean;
+  /** When this returns true the wrapper is not running anything: `command -v`. */
+  lookup?: (args: string[]) => boolean;
+}
+
+const NO_FLAGS: ReadonlySet<string> = new Set();
+const DURATION = /^\d+(\.\d+)?[smhd]?$/;
+const NUMBER = /^-?\d+$/;
+
+const WRAPPERS: Record<string, Wrapper> = {
+  sudo: {
+    valueFlags: new Set([
+      "-u", "-g", "-h", "-p", "-C", "-D", "-r", "-t", "-T", "-U",
+      "--user", "--group", "--host", "--prompt", "--close-from", "--chdir", "--role", "--type",
+      "--command-timeout", "--other-user",
+    ]),
+  },
+  doas: { valueFlags: new Set(["-u", "-C"]) },
+  pkexec: { valueFlags: new Set(["-u", "--user"]) },
+  // `env -S 'rm -rf /'` splits its string into a command. Not followed here:
+  // the value is skipped like any other, and the whole call is still judged.
+  env: { valueFlags: new Set(["-u", "--unset", "-C", "--chdir", "-S", "--split-string"]) },
+  command: { valueFlags: NO_FLAGS, lookup: (args) => args.some((arg) => arg === "-v" || arg === "-V") },
+  builtin: { valueFlags: NO_FLAGS },
+  exec: { valueFlags: new Set(["-a"]) },
+  nice: { valueFlags: new Set(["-n", "--adjustment"]) },
+  nohup: { valueFlags: NO_FLAGS },
+  time: { valueFlags: new Set(["-f", "-o", "--format", "--output"]) },
+  timeout: {
+    valueFlags: new Set(["-k", "-s", "--kill-after", "--signal"]),
+    operand: (token) => DURATION.test(token),
+  },
+  stdbuf: { valueFlags: new Set(["-i", "-o", "-e", "--input", "--output", "--error"]) },
+  ionice: { valueFlags: new Set(["-c", "-n", "-p", "-P", "-u", "--class", "--classdata", "--pid", "--pgid", "--uid"]) },
+  chrt: {
+    valueFlags: new Set(["-p", "-T", "-P", "-D", "--pid", "--sched-runtime", "--sched-period", "--sched-deadline"]),
+    operand: (token) => NUMBER.test(token),
+  },
+  // What follows `xargs` is the command with its operands still to come from
+  // stdin, so `xargs rm -rf` alone names no target. See `hardPatternHit` for
+  // the one shape where the operands are known.
+  xargs: {
+    valueFlags: new Set([
+      "-I", "-i", "-n", "-L", "-l", "-s", "-P", "-a", "-d", "-E",
+      "--replace", "--max-args", "--max-lines", "--max-chars", "--max-procs", "--arg-file", "--delimiter", "--eof",
+    ]),
+  },
+  busybox: { valueFlags: NO_FLAGS },
+  toybox: { valueFlags: NO_FLAGS },
+};
+
+/** Index of the first token after a wrapper's options, honouring `--`. */
+function afterOptions(args: string[], valueFlags: ReadonlySet<string>): number {
+  let index = 0;
+  while (index < args.length) {
+    const arg = args[index] as string;
+    if (arg === "--") return index + 1;
+    if (!arg.startsWith("-") || arg === "-") return index;
+    index += valueFlags.has(arg) ? 2 : 1;
+  }
+  return index;
+}
+
+/**
+ * One layer of wrapper removed, or `undefined` when the command is not a
+ * wrapper or wraps nothing. The result is always shorter than the input, so
+ * repeating this terminates without a counter.
+ *
+ * Leading `VAR=value` operands (`sudo FOO=x rm`, `env FOO=x rm`) are left in
+ * place: `commandOf` already looks past them, exactly as it does for a bare
+ * `FOO=x rm`.
+ */
+function unwrapOnce(tokens: string[]): string[] | undefined {
+  const wrapper = WRAPPERS[commandOf(tokens)];
+  if (wrapper === undefined) return undefined;
+  const args = argsOf(tokens);
+  if (wrapper.lookup?.(args) === true) return undefined;
+  let index = afterOptions(args, wrapper.valueFlags);
+  if (wrapper.operand !== undefined && index < args.length && wrapper.operand(args[index] as string)) index += 1;
+  const rest = args.slice(index);
+  return rest.length === 0 ? undefined : rest;
+}
+
+/**
+ * The segment as written, then with each wrapper layer peeled off.
+ *
+ * `fed` is what an earlier `echo`/`printf` in the command put on stdout. It
+ * matters only for `xargs`, whose command gets its operands from stdin: the
+ * wide-looking ones are appended so `echo ~ | xargs rm -rf` reads as
+ * `rm -rf ~`. The scanner does not tell `|` from `;`, so "earlier" means any
+ * earlier segment — which can only add an escalation, never remove one.
+ */
+function effectiveForms(tokens: string[], fed: readonly string[]): string[][] {
+  const forms = [tokens];
+  let current = tokens;
+  for (;;) {
+    const viaXargs = commandOf(current) === "xargs";
+    const inner = unwrapOnce(current);
+    if (inner === undefined) return forms;
+    current = viaXargs && fed.length > 0 ? [...inner, ...fed] : inner;
+    forms.push(current);
+  }
+}
+
+const SHELLS = new Set(["bash", "sh", "zsh", "dash", "ksh", "fish"]);
+
+/**
+ * The command string a `sh -c …` or an `eval …` would run, if this is one.
+ *
+ * `-c` may sit in a cluster (`-lc`, `-ec`); the string is the first operand
+ * after it. `eval` runs its arguments joined, which is also what the shell
+ * does with them.
+ */
+function shellString(tokens: string[]): string | undefined {
+  const name = commandOf(tokens);
+  const args = argsOf(tokens);
+  if (name === "eval") return args.length === 0 ? undefined : args.join(" ");
+  if (!SHELLS.has(name)) return undefined;
+  const flag = args.findIndex((arg) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(arg));
+  if (flag === -1) return undefined;
+  return args.slice(flag + 1).find((arg) => !arg.startsWith("-"));
+}
+
+/** How many levels of `sh -c "sh -c …"` are opened before giving up. */
+const MAX_SHELL_NESTING = 3;
+
+/**
+ * The first hard pattern this command matches, looking through wrappers and
+ * into shell strings.
+ *
+ * Every segment is tried as written and in each unwrapped form, against the
+ * raw patterns and the token patterns. A segment that is `sh -c <string>` or
+ * `eval …` has its string scanned the same way, to `MAX_SHELL_NESTING` deep:
+ * `sudo bash -c 'rm -rf ~'` is `rm -rf ~` and has to trip like it.
+ */
+function hardPatternHit(command: string, scan: BashScan, depth = 0): { name: string; reason: string } | undefined {
+  for (const [name, reason, pattern] of RAW_HARD_PATTERNS) {
+    if (pattern.test(command)) return { name, reason };
+  }
+  const flat = flatten(scan);
+  /** Wide targets echoed by earlier segments, for `xargs`. */
+  const fed: string[] = [];
+  /** An earlier `cd` put the shell somewhere wide, so `rm -rf *` is `rm -rf <wide>`. */
+  let hereWide = false;
+  for (const segment of scan.segments) {
+    const landed = cdLandsWide(segment);
+    if (landed !== undefined) hereWide = landed;
+    for (const form of effectiveForms(segment, fed)) {
+      for (const hard of HARD_PATTERNS) {
+        if (hard.matches(form, flat)) return { name: hard.name, reason: hard.reason };
+      }
+      if (findWideDelete(form) || (hereWide && rmHere(form))) return { name: "rm-rf-wide", reason: RM_RF_WIDE_REASON };
+      if (depth < MAX_SHELL_NESTING) {
+        const inner = shellString(form);
+        if (inner !== undefined) {
+          const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
+          if (hit !== undefined) return hit;
+        }
+      }
+    }
+    const name = commandOf(segment);
+    if (name === "echo" || name === "printf") fed.push(...argsOf(segment).filter((arg) => isWideTarget(arg)));
+  }
+  return undefined;
+}
 
 // ------------------------------------------------------------- the allowlist
 
@@ -1014,6 +1318,215 @@ function resolvesInside(cwd: string, target: string): boolean {
   return absolute === root || absolute.startsWith(root.endsWith(sep) ? root : root + sep);
 }
 
+// ------------------------------------------------------------ self-protection
+
+/**
+ * The pattern name for every attempt to switch this plugin off or down.
+ *
+ * A gate the agent can turn off is not a gate. `/jev:off` is a Bash call to
+ * the hook binary, the global off switch is a file in the data directory, and
+ * Claude Code's own settings decide whether the hooks run at all — each is a
+ * tool call the agent can make, so each is a code-rule trip, and under the
+ * default `pattern_trips: ask` it is the user who answers it.
+ *
+ * `export JEV_HOOKS_DISABLE=1`, `JEV_GATE=off` and `JEV_PATTERN_TRIPS=advisory`
+ * as shell assignments are deliberately not here: a hook process inherits its
+ * environment from Claude Code, not from the agent's shell, so they reach only
+ * the agent's own child processes and switch nothing off.
+ */
+export const SELF_DISABLE_PATTERN = "jev-self-disable";
+
+/** Commands that write, move or remove the file operands they are given. */
+const FILE_WRITERS = new Set([
+  "rm", "unlink", "shred", "touch", "tee", "cp", "mv", "install", "ln", "truncate", "mkdir", "rmdir", "chmod", "chown",
+]);
+
+/**
+ * Claude Code's settings files and its plugin registry: `.claude/settings*.json`
+ * at any level (the project's, and `~/.claude/`), and `~/.claude/plugins/*.json`
+ * (`installed_plugins.json`, `config.json`), which is where a plugin is enabled
+ * and where its options live.
+ */
+function isHarnessConfigPath(path: string): boolean {
+  const normalized = `/${path.replace(/\\/g, "/")}`;
+  return /\/\.claude\/settings[^/]*\.json$/i.test(normalized) || /\/\.claude\/plugins\/[^/]+\.json$/i.test(normalized);
+}
+
+/**
+ * This plugin's installed files: anything under a `jev` segment in Claude
+ * Code's plugin cache or a marketplace checkout (`~/.claude/plugins/cache/
+ * <marketplace>/jev/<version>/…`), the literal `${CLAUDE_PLUGIN_ROOT}` spelling
+ * of the same place, and the resolved plugin root when the hook knows it.
+ * Rewriting `hook.mjs` or `hooks.json` there is rewriting the gate itself.
+ */
+function isJevPluginPath(path: string, options: FilePrefilterOptions): boolean {
+  const normalized = `/${path.replace(/\\/g, "/")}`;
+  if (/\/\.claude\/plugins\/(?:cache|marketplaces)\/(?:[^/]+\/)*jev(?:\/|$)/i.test(normalized)) return true;
+  if (/^\$\{?CLAUDE_PLUGIN_ROOT\}?(?:\/|$)/.test(path)) return true;
+  return options.pluginRoot !== undefined && targetsDir(options.pluginRoot, options.cwd, path);
+}
+
+/**
+ * Claude Code's plugin registry. No word filter here, unlike the settings
+ * files: these two hold nothing but which plugins are installed and enabled,
+ * so any write to them is about plugins.
+ */
+function isPluginRegistryPath(path: string): boolean {
+  return /\/\.claude\/plugins\/(?:installed_plugins|known_marketplaces)\.json$/i.test(`/${path.replace(/\\/g, "/")}`);
+}
+
+/** The reason a write to `target` would switch this plugin off, if it would. */
+function selfDisableTarget(target: string, command: string, options: FilePrefilterOptions): string | undefined {
+  if (options.dataDir !== undefined && targetsDir(options.dataDir, options.cwd, target)) {
+    return "writing inside this plugin's data directory, where its off switch and its log live";
+  }
+  if (isJevPluginPath(target, options)) return "writing into this plugin's installed files";
+  if (isPluginRegistryPath(target)) return "writing Claude Code's plugin registry";
+  if (isHarnessConfigPath(target) && SELF_DISABLE_WORDS.test(command)) {
+    return "writing Claude Code settings in a way that names this plugin's hooks";
+  }
+  return undefined;
+}
+
+/** Does this command write, move or remove its file operands? `sed` only with `-i`. */
+function writesOperands(tokens: string[]): boolean {
+  const name = commandOf(tokens);
+  if (FILE_WRITERS.has(name)) return true;
+  return name === "sed" && sedInPlace(argsOf(tokens));
+}
+
+/** Does a `claude` CLI invocation disable, remove or reconfigure this plugin? */
+function claudeCliDisables(tokens: string[]): string | undefined {
+  if (commandOf(tokens) !== "claude") return undefined;
+  const words = argsOf(tokens).filter((arg) => !arg.startsWith("-"));
+  // No name means every plugin, which includes this one.
+  const namesJev = (names: string[]): boolean => names.length === 0 || names.some((name) => /jev/i.test(name));
+  if (words[0] === "plugin") {
+    if (words[1] === "marketplace" && ["remove", "rm", "delete"].includes(words[2] ?? "") && namesJev(words.slice(3))) {
+      return "removing the marketplace this plugin is installed from (claude plugin marketplace remove)";
+    }
+    if (["disable", "uninstall", "remove", "rm"].includes(words[1] ?? "") && namesJev(words.slice(2))) {
+      return `turning this plugin off (claude plugin ${words[1] as string})`;
+    }
+    return undefined;
+  }
+  // `claude config set|add|remove <key> …`: a key that names the hooks table,
+  // the plugin list or this plugin is the same edit as writing settings.json.
+  if (words[0] === "config" && ["set", "add", "remove", "rm", "unset"].includes(words[1] ?? "")) {
+    if (words.slice(2).some((word) => /hooks|plugins|jev/i.test(word))) {
+      return "changing Claude Code configuration that governs this plugin (claude config)";
+    }
+  }
+  return undefined;
+}
+
+/**
+ * Words in a settings edit that can reach this plugin.
+ *
+ * Narrow on purpose: a user's settings file is edited for many reasons, and
+ * `isSensitivePath` already sends every such edit to judgment. Only an edit
+ * that names the plugin, its environment, the plugin list or the hooks table
+ * is the one that could switch it off, and that one is the user's decision.
+ */
+const SELF_DISABLE_WORDS = /jev|JEV_|TYPESAFE_|disableAllHooks|enabledPlugins|hooks/i;
+
+/**
+ * Is `target` inside `dir`, as the shell or a file tool would resolve it?
+ *
+ * Relative paths resolve against `cwd`. `~/…`, `$HOME/…` and `${HOME}/…` have
+ * no home to expand against here, so they are matched by shape: the data
+ * directory lives at `~/.claude/plugins/data/<id>`, and when `dir` has that
+ * `.claude` tail the home-relative spelling of it is known exactly. A data
+ * directory somewhere else (a hand-wired `CLAUDE_PLUGIN_DATA`) has no known
+ * home-relative spelling, and a `~` path is then not matched at all.
+ */
+function targetsDir(dir: string, cwd: string, target: string): boolean {
+  const homeish = /^(?:~|\$HOME|\$\{HOME\})\/(.*)$/.exec(target);
+  if (homeish !== null) {
+    const root = resolve(dir).replace(/\\/g, "/");
+    const dot = root.indexOf("/.claude/");
+    if (dot === -1) return false;
+    const known = root.slice(dot + 1);
+    const given = (homeish[1] as string).split("/").filter((part) => part !== "" && part !== ".").join("/");
+    return given === known || given.startsWith(`${known}/`);
+  }
+  return resolvesInside(dir, isAbsolute(target) ? target : resolve(cwd, target));
+}
+
+/**
+ * The reason a Bash command trips `jev-self-disable`, or `undefined`.
+ *
+ * Looks through wrappers and into `sh -c`/`eval` strings exactly as
+ * `hardPatternHit` does, for the same reason: `bash -c 'node hook.mjs
+ * disable'` is `node hook.mjs disable`.
+ */
+function selfDisableBash(command: string, scan: BashScan, options: FilePrefilterOptions, depth = 0): string | undefined {
+  for (const segment of scan.segments) {
+    for (const form of effectiveForms(segment, [])) {
+      // `node …/dist/hook.mjs disable [session]` is `/jev:off`. `enable`,
+      // `status`, `why` and `calibrate` only read or restore, and stay free.
+      const binary = form.findIndex((token) => /(^|[\\/])hook\.mjs$/i.test(token));
+      if (binary !== -1 && form[binary + 1] === "disable") return "turning this plugin's hooks off (hook.mjs disable)";
+      // `daemon-ctl stop|restart` leaves the http hooks with nobody to post to
+      // until the watchdog's next pass, about ten seconds: a window the agent
+      // must not be able to open for itself. `/jev:daemon restart` typed by the
+      // user runs through the Bash tool and is asked about like any other.
+      if (binary !== -1 && form[binary + 1] === "daemon-ctl" && ["stop", "restart"].includes(form[binary + 2] ?? "")) {
+        return `stopping this plugin's daemon (daemon-ctl ${form[binary + 2] as string})`;
+      }
+      const cli = claudeCliDisables(form);
+      if (cli !== undefined) return cli;
+
+      if (depth < MAX_SHELL_NESTING) {
+        const inner = shellString(form);
+        if (inner !== undefined) {
+          const hit = selfDisableBash(inner, scanBash(inner), options, depth + 1);
+          if (hit !== undefined) return hit;
+        }
+      }
+
+      if (!writesOperands(form)) continue;
+      for (const arg of argsOf(form)) {
+        if (arg.startsWith("-")) continue;
+        const hit = selfDisableTarget(arg, command, options);
+        if (hit !== undefined) return hit;
+      }
+    }
+  }
+  for (const redirect of scan.redirects) {
+    if (redirect.special || redirect.target === "") continue;
+    const hit = selfDisableTarget(redirect.target, command, options);
+    if (hit !== undefined) return hit;
+  }
+  return undefined;
+}
+
+/** Every string a file tool's input would write, joined for a word search. */
+function editText(toolInput: Record<string, unknown>): string {
+  const parts: string[] = [];
+  for (const key of ["content", "old_string", "new_string", "new_source"]) {
+    const value = toolInput[key];
+    if (typeof value === "string") parts.push(value);
+  }
+  if (Array.isArray(toolInput.edits)) {
+    for (const edit of toolInput.edits as unknown[]) {
+      if (typeof edit !== "object" || edit === null) continue;
+      for (const key of ["old_string", "new_string"]) {
+        const value = (edit as Record<string, unknown>)[key];
+        if (typeof value === "string") parts.push(value);
+      }
+    }
+  }
+  return parts.join("\n");
+}
+
+/** The reason a file-tool call trips `jev-self-disable`, or `undefined`. */
+function selfDisableFile(path: string, toolInput: Record<string, unknown>, options: FilePrefilterOptions): string | undefined {
+  // The edit text stands in for the command text of the Bash form: the
+  // settings-file word filter reads what would be written.
+  return selfDisableTarget(path, editText(toolInput), options);
+}
+
 /**
  * Classify one Bash command.
  *
@@ -1033,19 +1546,12 @@ export function prefilterBash(
   options?: FilePrefilterOptions,
 ): Exclude<Prefilter, { kind: "affirm" }> {
   const scan = scanBash(command);
-  const flat = flatten(scan);
 
-  for (const [name, reason, pattern] of RAW_HARD_PATTERNS) {
-    if (pattern.test(command)) {
-      return { kind: "escalate", reason, pattern: name };
-    }
-  }
-  for (const segment of scan.segments) {
-    for (const hard of HARD_PATTERNS) {
-      if (hard.matches(segment, flat)) {
-        return { kind: "escalate", reason: hard.reason, pattern: hard.name };
-      }
-    }
+  const hit = hardPatternHit(command, scan);
+  if (hit !== undefined) return { kind: "escalate", reason: hit.reason, pattern: hit.name };
+  if (options !== undefined) {
+    const self = selfDisableBash(command, scan, options);
+    if (self !== undefined) return { kind: "escalate", reason: self, pattern: SELF_DISABLE_PATTERN };
   }
 
   if (scan.segments.length === 0) return { kind: "skip", reason: "empty command" };
@@ -1163,6 +1669,14 @@ export interface FilePrefilterOptions {
   cwd: string;
   /** strict mode judges even an ordinary in-cwd edit. */
   strict: boolean;
+  /**
+   * This plugin's own data directory, so a write into it can trip
+   * `jev-self-disable`. Optional because callers that only want the
+   * read-only/edit classification (the verification ledger) have no use for it.
+   */
+  dataDir?: string;
+  /** `CLAUDE_PLUGIN_ROOT` as the hook process sees it: where `hook.mjs` lives. */
+  pluginRoot?: string;
 }
 
 export function prefilterFileWrite(path: string | undefined, options: FilePrefilterOptions): Prefilter {
@@ -1391,6 +1905,10 @@ export interface PrefilterInput {
   toolInput: Record<string, unknown>;
   cwd: string;
   strict: boolean;
+  /** This plugin's data directory, for `jev-self-disable`. */
+  dataDir?: string;
+  /** This plugin's install directory (`CLAUDE_PLUGIN_ROOT`), for `jev-self-disable`. */
+  pluginRoot?: string;
 }
 
 export const FILE_TOOLS = new Set(["Write", "Edit", "MultiEdit", "NotebookEdit", "Update"]);
@@ -1446,15 +1964,24 @@ export function prefilter(input: PrefilterInput): Prefilter {
     if (toolName === "PowerShell") {
       return { ...found, kind: "judge", reason: "PowerShell is not tokenized here" };
     }
-    return { ...prefilterBash(reading.command, { cwd: input.cwd, strict: input.strict }), ...found };
+    const options: FilePrefilterOptions = { cwd: input.cwd, strict: input.strict };
+    if (input.dataDir !== undefined) options.dataDir = input.dataDir;
+    if (input.pluginRoot !== undefined) options.pluginRoot = input.pluginRoot;
+    return { ...prefilterBash(reading.command, options), ...found };
   }
 
   if (FILE_TOOLS.has(toolName)) {
     const path = input.toolInput.file_path ?? input.toolInput.notebook_path ?? input.toolInput.path;
-    return prefilterFileWrite(typeof path === "string" ? path : undefined, {
-      cwd: input.cwd,
-      strict: input.strict,
-    });
+    const options: FilePrefilterOptions = { cwd: input.cwd, strict: input.strict };
+    if (input.dataDir !== undefined) options.dataDir = input.dataDir;
+    if (input.pluginRoot !== undefined) options.pluginRoot = input.pluginRoot;
+    // A write that reaches this plugin's own off switch or the harness
+    // settings is a code-rule trip before it is anything else.
+    if (typeof path === "string" && path !== "") {
+      const self = selfDisableFile(path, input.toolInput, options);
+      if (self !== undefined) return { kind: "escalate", reason: self, pattern: SELF_DISABLE_PATTERN };
+    }
+    return prefilterFileWrite(typeof path === "string" ? path : undefined, options);
   }
 
   if (toolName.startsWith("mcp__")) return prefilterMcp(toolName);

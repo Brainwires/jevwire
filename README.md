@@ -102,10 +102,14 @@ concrete client, so tests can pass a fake or you can swap in another structured-
 
 ## What you will see
 
-**Nothing addressed to you.** The hooks talk to Claude, not to the human: there is no permission
-prompt in this plugin unless you switch one on (`ask_on_trip`). Most tool calls produce no `[jev]`
-line at all, either — a deterministic prefilter decides whether the model is consulted, and reading
-files, running tests, `git status` and ordinary in-project edits never reach it.
+**Almost nothing addressed to you.** The hooks talk to Claude, not to the human: a classifier
+judgment never becomes a permission prompt unless you switch that on (`ask_on_trip`). The one
+exception is a code-rule match — `rm -rf ~`, a force push to `main`, an attempt to switch this
+plugin off — which by default (`pattern_trips: ask`) is a permission prompt you answer, because a
+rule that Claude could clear on its own with a marker would be a rule in name only. Most tool calls
+produce no `[jev]` line at all, either — a deterministic prefilter decides whether the model is
+consulted, and reading files, running tests, `git status` and ordinary in-project edits never reach
+it.
 
 When the tool gate does fire, it is one of two things, and the difference matters. (The stop check
 and the injection screen, further down, are the other two hooks that can say anything at all.)
@@ -213,7 +217,7 @@ rejects `do not`, `must`, `never`, `proceed`, `treat it` and `ignore` in all of 
 
 | Boundary | What it judges | What it can do |
 |---|---|---|
-| `PreToolUse` on `Bash`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `mcp__*` | Is this destructive, outward-facing, touching credentials, far-reaching, or unrelated to what you asked for? | Hand Claude a note after the call ran, or `deny` it once with a reason Claude can answer. Never prompts you unless `ask_on_trip` is on |
+| `PreToolUse` on `Bash`, `PowerShell`, `Write`, `Edit`, `MultiEdit`, `NotebookEdit`, `mcp__*` | Is this destructive, outward-facing, touching credentials, far-reaching, or unrelated to what you asked for? | Hand Claude a note after the call ran, or `deny` it once with a reason Claude can answer. A classifier judgment never prompts you unless `ask_on_trip` is on; a code-rule match asks you by default (`pattern_trips`) |
 | `PreToolUse` on `Agent`, `Task` | Nothing. It is never judged | Nothing you see. Records the task the subagent was given, so the subagent's own calls are judged against it rather than against a prompt it never saw |
 | `PostToolUse` on `WebFetch`, `WebSearch`, `mcp__*` | Does this result contain instructions addressed to an AI agent, or contradict something the request assumed? | Add one line of context. Never blocks, never rewrites the result |
 | `PostToolUse` / `PostToolUseFailure` on gated tools (async) | — | Nothing you see. Records whether the last test/build/type-check/lint command passed, how many edits have happened since, and whether a re-issued call ran or failed |
@@ -267,6 +271,11 @@ after 30 minutes with no hooks to serve, or a minute after the last session ends
 `/jev:status` has a **Daemon** section, and `/jev:daemon [status|stop|restart]` is the direct
 control. Both report: up or down, pid, version, protocol, uptime, sessions registered, hooks served by
 event, Jev calls versus memo hits, timeouts, restarts, and whether something else is on the port.
+`/jev:daemon stop` and `restart` run through the Bash tool, and stopping the daemon silences the
+http hooks until the watchdog's next pass, so since 0.7 they are a code-rule trip
+(`jev-self-disable`): under the default `pattern_trips: ask` you will be asked to approve your own
+`/jev:daemon restart`, which is the price of Claude not being able to issue it unasked. `status` is
+free.
 
 One quirk worth knowing: a `/jev:*` command runs through the Bash tool, whose process may be
 sandboxed away from loopback sockets. When that happens the report says *"the state file says running
@@ -300,7 +309,8 @@ environment fallback for hand-wired use.
 |---|---|---|---|---|
 | `api_key` | string (sensitive) | — | TypeSafe API key. Without it the judgment hooks stay inactive | `TYPESAFE_API_KEY` |
 | `gate` | `off` \| `advisory` \| `strict` | `advisory` | `advisory` judges writes outside the project, sensitive paths, unrecognized shell commands and MCP tools with unknown effects, notes what it finds, and trips the two block-grade cases; `strict` also judges ordinary in-project edits and notes the cases advisory mode keeps to itself. Replaces `gate_mode` (see below) | `JEV_GATE` |
-| `ask_on_trip` | boolean | `false` | Turn a tripwire's `deny` into a permission prompt, so you decide instead of Claude. The only setting in the plugin that can prompt you. No effect in `dontAsk`/`bypassPermissions` | `JEV_ASK_ON_TRIP` |
+| `ask_on_trip` | boolean | `false` | Turn a classifier tripwire's `deny` (model, lint, commit) into a permission prompt, so you decide instead of Claude. No effect in `dontAsk`/`bypassPermissions`. Code-rule trips are governed by `pattern_trips` | `JEV_ASK_ON_TRIP` |
+| `pattern_trips` | `ask` \| `deny` \| `advisory` | `ask` | Who clears a code-rule trip (`rm -rf ~`, a force push to `main`, `git reset --hard`, `mkfs`, `dd` to a device, a recursive world-writable `chmod`, a fork bomb, an attempt to turn this plugin off). `ask`: you approve or refuse it in the permission prompt, denied in `dontAsk`/`bypassPermissions`; `deny`: always denied; `advisory`: the pre-0.7 behaviour, denied once to Claude, which may re-issue it with a `# jev:intended` marker. A marker never clears a code-rule trip under `ask` or `deny` | `JEV_PATTERN_TRIPS` |
 | `stop_check` | boolean | `true` | The `Stop` check on the final message | `JEV_STOP_CHECK` |
 | `verify_claims` | boolean | `true` | The model half of the `Stop` claim check (reads `git diff HEAD`). The deterministic file/identifier checks always run under `stop_check` | `JEV_VERIFY_CLAIMS` |
 | `screen_results` | boolean | `true` | The `PostToolUse` injection screen | `JEV_SCREEN_RESULTS` |
@@ -685,18 +695,27 @@ written to argue for its own approval must not be able to produce an approval. T
 the decision has no `allow` member — the case is unrepresentable — and the test suite asserts that
 no code path and no shipped bundle contains one.
 
-**Never prompt you, by default.** `ask` is reachable only through `ask_on_trip`, which is off. A
-fuzz test over every handler, permission mode, tool and answer shape asserts that the only
-permission decision the default configuration can produce is `deny`, and a static test asserts that
-`"ask"` is produced in exactly one expression in the whole hook source, guarded by that setting.
-What the plugin does instead is hand Claude a note, or deny one call with a reason Claude can
-answer.
+**A classifier never prompts you; a code rule does.** For a model, lint or commit trip, `ask` is
+reachable only through `ask_on_trip`, which is off: the plugin hands Claude a note, or denies one
+call with a reason Claude can answer. A code-rule trip is the other way round by default
+(`pattern_trips: ask`): the call becomes a permission prompt you answer, and a `# jev:intended`
+marker from Claude is recorded as refused rather than honoured — a rule the agent could clear on
+its own is exactly what an injected page would clear. In `dontAsk` and `bypassPermissions`, where
+there is no prompt, a code-rule trip is a plain deny. A fuzz test over every handler, permission
+mode, tool and answer shape asserts that the default configuration asks only about a code rule and
+only in an interactive mode, that `pattern_trips: advisory` never asks at all, and that nothing ever
+produces `allow`; a static test asserts that `"ask"` is produced in exactly one expression in the
+whole hook source, guarded by those two settings.
 
-**Fail open, silently.** No API key, a timeout, a network or API error, malformed stdin, a bug — all
-of them end as exit 0 with empty stdout and never exit 2, with the error recorded in the local
-decision log. A gate that breaks your session because an API was down is worse than no gate.
-Per-call timeout is 1500 ms with no retries, under a 3500 ms hard wall clock, under the 5 s hook
-timeout.
+**Fail open, and say so.** No API key, a timeout, a network or API error, malformed stdin, a bug — all
+of them let the call through: exit 0, never exit 2, no `deny`, no prompt, with the error recorded in
+the local decision log. A gate that breaks your session because an API was down is worse than no
+gate. What a gate error no longer does is pass in silence: when a judgment call fails or times out
+while the daemon is up, the tool gate hands you one line saying the call went through unjudged and
+that pattern trips still apply, at most once every ten minutes per session. (With no daemon at all
+there is nobody to say it; Claude Code drops a refused http hook without a word, and `SessionStart`
+is where daemon trouble is reported.) Per-call timeout is 1500 ms with no retries, under a 3500 ms
+hard wall clock, under the 5 s hook timeout.
 
 **stdout is protocol.** The MCP server writes nothing but MCP to stdout; every diagnostic goes to
 stderr. Hook stdout is either empty or a single valid hook JSON document.
@@ -713,6 +732,13 @@ override are pure functions with their own tests; the model only ever supplies p
   release, on top of the tool call it gates. The prefilter is what keeps this off most calls.
 - **Advisory, not a security boundary.** Real enforcement is the permission system's job. Treat
   this as a layer that catches plausible mistakes.
+- **The code rules read the command, not what it computes.** They see through `sudo`, `env`,
+  `xargs`, `sh -c`, `eval` and the other wrappers, into `find … -delete` and a `cd` before `rm -rf *`,
+  and into the files and commands that would switch this plugin off. They do not see code run
+  through an interpreter (`perl -e`, `python -c`, `node -e`, `base64 -d | sh`), a command name built
+  from a variable (`x=rm; $x -rf ~`), or an edit to a shell rc file that only takes effect in a later
+  session. Those reach the model judgment, which can be wrong — and with no key, or a timed-out
+  call, they pass with a notice.
 - **Jev is not injection-hardened.** State is data, and Jev does not treat it as hostile. Text
   inside a tool input or a fetched page — an injected instruction, a misleading framing, text
   arguing for its own classification — can move its probabilities. Never rely on `jev_gate_action`
@@ -746,9 +772,11 @@ override are pure functions with their own tests; the model only ever supplies p
   contradicts a recorded failure. It cannot otherwise tell a finished task from an unfinished one.
 - **The async post-tool hook can lose its race with Stop.** When it does, the ledger is one entry
   behind, which only ever makes the stop check more lenient.
-- **`ask_on_trip` has no audience in `dontAsk` and `bypassPermissions`.** There is no prompt to
-  show, so a tripwire stays a `deny` addressed to Claude. In those modes the plugin is the only
-  thing in the way, which is exactly when you should not rely on it alone.
+- **`ask_on_trip` and `pattern_trips: ask` have no audience in `dontAsk` and `bypassPermissions`.**
+  There is no prompt to show, so a classifier tripwire stays a `deny` addressed to Claude, and a
+  code-rule trip becomes a `deny` that no marker clears: the call needs you to run it, or to change
+  `pattern_trips`. In those modes the plugin is the only thing in the way, which is exactly when you
+  should not rely on it alone.
 - **The fingerprint is exact.** Any edit to a tripped call — a changed flag, a different path — is a
   new action and gets its own judgment rather than inheriting an affirmation. A narrowed re-issue is
   therefore judged again, which is the direction to fail in.
@@ -802,12 +830,16 @@ dynamically; the client retries 429/529 with jittered exponential backoff and ho
 whether a key is configured and whether `gate` is `off`. If it shows decisions in the last 24 hours,
 the hooks are running and the prefilter is doing its job.
 
-**Too many permission prompts.** There are none. As of 0.3.0 this plugin never prompts you: a
-judgment is a note to Claude, or a single `deny` addressed to Claude, and `ask_on_trip` is the only
-setting that changes that. If a permission prompt is appearing, it is Claude Code's own — check
-`/permissions`, not this plugin. (One case is worth knowing: a sidecar affirmation for a Write or an
-MCP tool is a real Bash call, `true # jev:intended …`, which Claude Code's own rules may prompt for
-in `default` mode. `Bash(true:*)` in your allowlist settles it.)
+**Too many permission prompts.** A prompt from this plugin says `[jev] tripwire` and names a code
+rule: it is `pattern_trips: ask` putting `rm -rf ~` or a force push to `main` in front of you, and
+there is one per distinct call, not one per attempt. If that is more than you want, `pattern_trips:
+deny` refuses them outright and `pattern_trips: advisory` restores the pre-0.7 behaviour, where
+Claude is told and may re-issue the call with a marker. A classifier judgment never prompts you
+unless `ask_on_trip` is on: it is a note to Claude, or a single `deny` addressed to Claude. Any
+other prompt is Claude Code's own — check `/permissions`, not this plugin. (One case is worth
+knowing: a sidecar affirmation for a Write or an MCP tool is a real Bash call, `true # jev:intended
+…`, which Claude Code's own rules may prompt for in `default` mode. `Bash(true:*)` in your allowlist
+settles it.)
 
 **Too many notes.** Run `/jev:calibrate`. Section 1 lists notes emitted next to everything the table
 called for and suppressed, by reason, plus notes per user prompt against the cap of five; section 5
@@ -815,10 +847,12 @@ replays your own log at other thresholds and counts the notes and trips each one
 produced. Then either raise `auto_threshold` or set `gate` to `off`. `strict` goes the other way and
 notes more.
 
-**Claude keeps re-issuing a denied call with a marker.** That is the tripwire working as designed —
-and `/jev:why <n> trips` prints each marker text so you can judge it. If the reasons read like
-`user asked` rather than a sentence from your request, the reflex is forming; `/jev:calibrate`
-counts that too, under marker hygiene. `ask_on_trip: true` puts you in the loop instead.
+**Claude keeps re-issuing a denied call with a marker.** For a classifier trip that is the tripwire
+working as designed — and `/jev:why <n> trips` prints each marker text so you can judge it. If the
+reasons read like `user asked` rather than a sentence from your request, the reflex is forming;
+`/jev:calibrate` counts that too, under marker hygiene. `ask_on_trip: true` puts you in the loop
+instead. For a code-rule trip the marker changes nothing unless `pattern_trips` is `advisory`: the
+re-issue is logged as `marker-refused` and the call is still yours to approve.
 
 **I set the key and it is not picked up.** Run `/reload-plugins`. The plugin setting reaches the MCP
 server as `JEV_PLUGIN_API_KEY` and the hooks as `CLAUDE_PLUGIN_OPTION_API_KEY`, and both are read at

@@ -13,8 +13,18 @@
  *    dropped when the call is blocked. The agent may re-issue the identical
  *    call with an affirmation marker and it passes without further judgment.
  *
- * Nobody is prompted. `permissionDecision: "ask"` is reachable only through the
- * explicit `ask_on_trip` setting, and `"allow"` is not representable at all.
+ * A classifier never prompts anybody: for a model, lint or commit trip,
+ * `permissionDecision: "ask"` is reachable only through the explicit
+ * `ask_on_trip` setting. A code-rule (pattern) trip is different since 0.7:
+ * under `pattern_trips: ask`, the default, it *is* a prompt — the user
+ * approves or refuses `rm -rf ~` themselves, and a marker from the agent does
+ * not clear it — and in a mode with no prompt it is a plain deny. `"allow"` is
+ * not representable at all.
+ *
+ * A fourth, rare shape is a `systemMessage` with no decision: the judgment
+ * call failed or timed out, the call went through, and the user is told so
+ * at most once per `GATE_ERROR_NOTICE_INTERVAL_MS`. Still fail-open; no
+ * longer fail-silent.
  *
  * Order matters: prefilter, then the tripwire, then judgment. The prefilter
  * keeps the model off `ls`; the tripwire answers a re-issue without spending a
@@ -29,20 +39,31 @@ import { handleCommit, isGitCommit } from "./commit.js";
 import { compactJson, redact, redactAndClamp } from "../redact.js";
 import { modelCost, MAX_PROMPT_CHARS } from "../store.js";
 import type { DecisionRecord } from "../store.js";
-import { fingerprint, tripIdOf, MAX_REASON_CHARS, type Trip } from "../tripwire.js";
+import { fingerprint, tripIdOf, MAX_REASON_CHARS, type Trip, type TripSource } from "../tripwire.js";
 import {
   actionSubject,
   blastLabel,
+  gateErrorSystemMessage,
   modelTripText,
   noteText,
   patternTripText,
   tripRepeatText,
   MAX_EMITTED_CHARS,
+  type PatternTripNeeds,
 } from "../wording.js";
+import type { HookConfig } from "../config.js";
 import type { Deps, EscalatingDecision, HookInput, HookOutput } from "../types.js";
 
 /** Longest tool input we will pay to have judged. */
 const MAX_ACTION_CHARS = 4000;
+/**
+ * How often a session is told that the gate let a call through unjudged.
+ *
+ * A gate error is almost always an API that is down or slow, which does not
+ * fix itself between one tool call and the next; one line every ten minutes
+ * says so without turning every call into a complaint.
+ */
+export const GATE_ERROR_NOTICE_INTERVAL_MS = 10 * 60 * 1000;
 /** The free-text fields of the judged action, longest-lived first. */
 const ACTION_TEXT_FIELDS = ["command", "content_head", "old_string", "new_string", "text"] as const;
 /** Longest `subject` written to the decision log. */
@@ -50,16 +71,41 @@ const MAX_LOG_SUBJECT_CHARS = 300;
 /** Modes with no prompt to show, so `ask_on_trip` cannot apply. */
 const PROMPTLESS_MODES = new Set(["dontAsk", "bypassPermissions"]);
 
+/** The two settings that decide who a trip is addressed to. */
+export type TripPolicy = Pick<HookConfig, "askOnTrip" | "patternTrips">;
+
 /**
  * How a trip reaches its audience.
  *
- * The single place `"ask"` is produced in this plugin, and it is unreachable
- * unless the user set `ask_on_trip`. `tests/hooks/never-allow.test.ts` asserts
- * that statically, because "the hooks never prompt" is the promise of this
- * release and a second occurrence of that string is how it would quietly break.
+ * The single place `"ask"` is produced in this plugin. A classifier trip
+ * (model, lint, commit) asks only when the user set `ask_on_trip`. A code-rule
+ * trip asks under `pattern_trips: ask`, the default, never under `deny`, and
+ * follows `ask_on_trip` under `advisory`. Neither asks in a mode with no
+ * prompt to show. `tests/hooks/never-allow.test.ts` asserts the single site
+ * statically: a second expression producing that string is how "a prompt
+ * comes from exactly these two settings" would quietly stop being true.
  */
-export function tripChannel(askOnTrip: boolean, mode: string | undefined): EscalatingDecision {
-  return askOnTrip && !PROMPTLESS_MODES.has(mode ?? "default") ? "ask" : "deny";
+export function tripChannel(policy: TripPolicy, mode: string | undefined, source: TripSource): EscalatingDecision {
+  // A code-rule trip under `ask` or `deny` is the user's; `advisory` hands it
+  // to `askOnTrip` like a classifier trip. Spelled so this stays the one line
+  // in the hook source that produces the string.
+  const byRule = source === "pattern" && policy.patternTrips !== "advisory";
+  return (byRule ? policy.patternTrips !== "deny" : policy.askOnTrip) && !PROMPTLESS_MODES.has(mode ?? "default") ? "ask" : "deny";
+}
+
+/**
+ * Whether the agent can clear this trip with a marker.
+ *
+ * Everything but a code-rule trip under `ask`/`deny`: those are the user's to
+ * clear, in the prompt or by hand, and a marker on them is recorded as refused.
+ */
+export function agentMayAffirm(policy: TripPolicy, source: TripSource): boolean {
+  return source !== "pattern" || policy.patternTrips === "advisory";
+}
+
+/** What a code-rule trip's text has to say about the way forward. */
+function patternNeeds(policy: TripPolicy, channel: EscalatingDecision): PatternTripNeeds {
+  return policy.patternTrips === "advisory" ? "advisory" : channel;
 }
 
 /** A trip: the text goes in the reason, where a blocked call can still show it. */
@@ -78,19 +124,55 @@ export function noteOutput(text: string): HookOutput {
   return { hookSpecificOutput: { hookEventName: "PreToolUse", additionalContext: text } };
 }
 
+/** The least of an over-length field's tail that is kept. */
+export const MIN_ELIDED_TAIL_CHARS = 1000;
+
+/**
+ * Fit `text` into `max` characters by cutting out the middle.
+ *
+ * The head alone is not enough: `echo <4000 chars of padding>; sudo rm -rf
+ * /Users/x` reached the model with the payload cut off, and a command's
+ * operative part is as likely to be at its end as its start. So the budget is
+ * split about evenly between the head and the tail, with the tail never
+ * shorter than `MIN_ELIDED_TAIL_CHARS` while the budget allows, and a marker
+ * in between says how much is missing. The result is exactly `max` long.
+ *
+ * Redaction is the caller's job and has to come first: a secret that
+ * straddles the cut would otherwise survive as two halves.
+ */
+export function elideMiddle(text: string, max: number): string {
+  if (text.length <= max) return text;
+  const markerFor = (elided: number): string => `…[${elided} chars elided]…`;
+  // The marker counts the characters it replaces, and its own length depends
+  // on that count, so settle the two together. A digit rollover moves the
+  // count by one and converges on the next pass.
+  let marker = markerFor(text.length - max);
+  for (let pass = 0; pass < 3; pass += 1) {
+    const next = markerFor(text.length - (max - marker.length));
+    if (next.length === marker.length) break;
+    marker = next;
+  }
+  const budget = max - marker.length;
+  if (budget <= 0) return text.slice(0, max);
+  const tail = Math.min(budget, Math.max(MIN_ELIDED_TAIL_CHARS, Math.floor(budget / 2)));
+  const head = budget - tail;
+  return `${text.slice(0, head)}${markerFor(text.length - budget)}${text.slice(text.length - tail)}`;
+}
+
 /**
  * Redact every string in the judged action, and keep the whole of it inside
  * `max`.
  *
  * The per-field caps in `structuredAction` already bound each tool's own
  * shape; this is the guard that holds whatever mix of fields a future tool
- * populates, trimming the longest-lived fields first in one pass.
+ * populates, trimming the longest-lived fields first in one pass. Both cuts
+ * keep the head and the tail, for the reason `elideMiddle` gives.
  */
 function boundAction(action: GateAction, max: number): GateAction {
   const out: GateAction = { ...action, target_paths: [...action.target_paths] };
   for (const field of ACTION_TEXT_FIELDS) {
     const value = out[field];
-    if (typeof value === "string") out[field] = redactAndClamp(value, max);
+    if (typeof value === "string") out[field] = elideMiddle(redact(value), max);
   }
   if (out.input !== undefined) out.input = JSON.parse(redact(compactJson(out.input))) as typeof out.input;
   out.target_paths = out.target_paths.map((path) => redact(path));
@@ -102,7 +184,7 @@ function boundAction(action: GateAction, max: number): GateAction {
     if (typeof value !== "string" || value.length === 0) continue;
     const keep = Math.max(0, value.length - over);
     over -= value.length - keep;
-    out[field] = value.slice(0, keep);
+    out[field] = elideMiddle(value, keep);
   }
   return out;
 }
@@ -138,7 +220,17 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
   const toolInput = (input.tool_input ?? {}) as Record<string, unknown>;
   const cwd = input.cwd ?? process.cwd();
-  const verdict = prefilter({ toolName, toolInput, cwd, strict: config.gate === "strict" });
+  // `CLAUDE_PLUGIN_ROOT` is exported to hook processes and inherited by the
+  // daemon SessionStart spawns; it names the files `jev-self-disable` guards.
+  const pluginRoot = process.env.CLAUDE_PLUGIN_ROOT?.trim();
+  const verdict = prefilter({
+    toolName,
+    toolInput,
+    cwd,
+    strict: config.gate === "strict",
+    dataDir: config.dataDir,
+    ...(pluginRoot !== undefined && pluginRoot !== "" ? { pluginRoot } : {}),
+  });
   /** Marker text is never part of the action: not for the hash, not for Jev. */
   const action = verdict.stripped ?? toolInput;
   const marker = verdict.marker;
@@ -164,6 +256,12 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     const trip = marker.trip_id === undefined ? undefined : store.findTripById(sessionId, marker.trip_id, now);
     if (trip === undefined) {
       store.append({ ...base, decision: "affirm-unmatched", affirmation, ...(marker.trip_id !== undefined ? { trip_id: marker.trip_id } : {}) });
+      return undefined;
+    }
+    // A code-rule trip is the user's to clear. The sidecar itself is `true`
+    // and runs; the trip stays open and the marker is recorded as refused.
+    if (!agentMayAffirm(config, trip.source)) {
+      store.append({ ...base, decision: "affirm-refused", trip_id: trip.id, fingerprint: trip.fingerprint, source: trip.source, affirmation });
       return undefined;
     }
     store.affirmTrip(sessionId, trip.id, affirmation, now);
@@ -209,6 +307,33 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
   if (open !== undefined) {
     const affirmation = marker?.reason ?? open.affirmation;
+    if (affirmation !== undefined && !agentMayAffirm(config, open.source)) {
+      // A marker on a code-rule trip the agent cannot clear. The call is not
+      // run, the trip stays open, and the attempt is counted and logged with
+      // the marker text so the user can see the reflex forming.
+      store.repeatTrip(sessionId, open.id, now);
+      const channel = tripChannel(config, input.permission_mode, open.source);
+      const text = patternTripText({
+        id: open.id,
+        pattern: open.pattern ?? "pattern",
+        reason: open.reason,
+        needs: patternNeeds(config, channel),
+        tool: toolName,
+        markerRefused: true,
+      });
+      store.append({
+        ...base,
+        decision: "marker-refused",
+        trip_id: open.id,
+        fingerprint: fp,
+        source: open.source,
+        channel,
+        affirmation: redactAndClamp(affirmation, MAX_REASON_CHARS),
+        emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
+        ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
+      });
+      return tripOutput(channel, text);
+    }
     if (affirmation !== undefined) {
       // Row 3: affirmed. No judging, no model call, nothing on stdout.
       store.closeTrip(sessionId, open.id, now);
@@ -234,8 +359,13 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
     // Row 4: the same call again, still without a reason.
     const attempt = store.repeatTrip(sessionId, open.id, now);
-    const channel = tripChannel(config.askOnTrip, input.permission_mode);
-    const text = tripRepeatText({ id: open.id, attempt, seconds: (now - open.ts) / 1000 });
+    const channel = tripChannel(config, input.permission_mode, open.source);
+    const text = tripRepeatText({
+      id: open.id,
+      attempt,
+      seconds: (now - open.ts) / 1000,
+      ...(open.source === "pattern" ? { needs: patternNeeds(config, channel) } : {}),
+    });
     store.append({
       ...base,
       decision: "trip-repeat",
@@ -272,9 +402,17 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
   if (verdict.kind === "escalate") {
     // Row 2: a code rule matched. Certain by construction; no model consulted.
+    // Under `pattern_trips: ask` (the default) this is the user's call to
+    // make, in the permission prompt; a marker from the agent will not clear it.
     const id = tripIdOf(fp);
-    const channel = tripChannel(config.askOnTrip, input.permission_mode);
-    const text = patternTripText({ id, pattern: verdict.pattern, reason: verdict.reason });
+    const channel = tripChannel(config, input.permission_mode, "pattern");
+    const text = patternTripText({
+      id,
+      pattern: verdict.pattern,
+      reason: verdict.reason,
+      needs: patternNeeds(config, channel),
+      tool: toolName,
+    });
     const trip: Trip = {
       id,
       fingerprint: fp,
@@ -418,7 +556,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
     if (outcome.outcome === "trip") {
       const id = tripIdOf(fp);
-      const channel = tripChannel(config.askOnTrip, input.permission_mode);
+      const channel = tripChannel(config, input.permission_mode, "model");
       const text = modelTripText({
         id,
         tool: toolName,
@@ -500,13 +638,37 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     });
     return undefined;
   } catch (error) {
+    // Fail open, but not in silence: the call runs, and the user is told —
+    // once per interval, because an API that is down stays down for a while.
+    // Never a decision, never a prompt; a `systemMessage` is all this is.
+    const name = error instanceof Error ? error.name : "";
+    const cause = /AbortError|TimeoutError/.test(name) ? "timeout" : name !== "" ? name : "error";
+    // The store swallows its own I/O errors, but this is the fail-open path
+    // and nothing in it may throw: a broken session file costs at most an
+    // extra notice, never the notice itself.
+    let last: number | undefined;
+    try {
+      last = store.readSession(sessionId).gate_error_notice_at;
+    } catch {
+      last = undefined;
+    }
+    const notify = last === undefined || now - last >= GATE_ERROR_NOTICE_INTERVAL_MS;
+    const text = notify ? gateErrorSystemMessage({ cause }) : undefined;
+    if (text !== undefined) {
+      try {
+        store.updateSession(sessionId, (state) => ({ ...state, gate_error_notice_at: now }), now);
+      } catch {
+        // The notice still goes out; the next one may just come sooner.
+      }
+    }
     store.append({
       ...base,
       decision: "error",
       fingerprint: fp,
       error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
+      ...(text !== undefined ? { emitted: redactAndClamp(text, MAX_EMITTED_CHARS) } : {}),
     });
-    return undefined;
+    return text === undefined ? undefined : { systemMessage: text };
   } finally {
     clearTimeout(timer);
   }

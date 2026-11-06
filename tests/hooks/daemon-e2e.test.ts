@@ -160,7 +160,8 @@ describe("node plugin/dist/hook.mjs daemon", () => {
     const parsed = JSON.parse(reply.text) as {
       hookSpecificOutput: { permissionDecision: string; permissionDecisionReason: string };
     };
-    expect(parsed.hookSpecificOutput.permissionDecision).toBe("deny");
+    // `pattern_trips: ask`, the default: the user answers a code-rule trip.
+    expect(parsed.hookSpecificOutput.permissionDecision).toBe("ask");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("[jev] tripwire t-");
     expect(parsed.hookSpecificOutput.permissionDecisionReason).toContain("no model was consulted");
     // And it wrote the decision log, in the data directory it was given.

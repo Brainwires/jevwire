@@ -113,7 +113,7 @@ export async function handleLint(
       return undefined;
     }
     const attempt = store.repeatTrip(sessionId, open.id, now);
-    const channel = tripChannel(config.askOnTrip, input.permission_mode);
+    const channel = tripChannel(config, input.permission_mode, "lint");
     const text = tripRepeatText({ id: open.id, attempt, seconds: (now - open.ts) / 1000 });
     store.append({ ...base, kind: "lint", decision: "trip-repeat", trip_id: open.id, fingerprint: fp, source: open.source, channel, emitted: redactAndClamp(text, MAX_EMITTED_CHARS) });
     return tripOutput(channel, text);
@@ -166,7 +166,7 @@ export async function handleLint(
 
     if (outcome.outcome === "trip" && outcome.trip !== undefined) {
       const id = tripIdOf(fp);
-      const channel = tripChannel(config.askOnTrip, input.permission_mode);
+      const channel = tripChannel(config, input.permission_mode, "lint");
       const p = result.signals[outcome.trip] ?? 0;
       const text = lintTripText({ id, tool: toolName, finding: outcome.trip, p });
       const trip: Trip = {

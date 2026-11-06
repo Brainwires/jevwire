@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "jev",
   "displayName": "Jev",
-  "version": "0.6.6",
-  "description": "Puts a fast calibrated classifier at the harness boundaries: hands Claude a note about a risky tool call, denies the two block-grade cases once with a reason Claude can answer, flags tool results that read like prompt injection, and catches a turn that stops short of the work it was asked to do. Advisory to the agent, never a prompt to you, and fail-open.",
+  "version": "0.7.0",
+  "description": "Puts a fast calibrated classifier at the harness boundaries: hands Claude a note about a risky tool call, denies the two block-grade cases once with a reason Claude can answer, flags tool results that read like prompt injection, and catches a turn that stops short of the work it was asked to do. Advisory to the agent and fail-open; a command that matches a hard rule (rm -rf ~, a force push to main, turning the plugin off) asks you instead.",
   "author": {
     "name": "Brainwires"
   },
@@ -31,7 +31,7 @@
     "gate": {
       "type": "string",
       "title": "Tool-call gate",
-      "description": "off: no PreToolUse gate at all. advisory: judge writes outside the project, sensitive paths, unrecognized shell commands and MCP tools with unknown effects, then hand Claude a note about what was scored; the two block-grade cases are denied once with a reason Claude can answer. strict: also judge ordinary edits inside the project, and note the cases advisory mode keeps to itself. You are never prompted in any of the three.",
+      "description": "off: no PreToolUse gate at all. advisory: judge writes outside the project, sensitive paths, unrecognized shell commands and MCP tools with unknown effects, then hand Claude a note about what was scored; the two block-grade cases are denied once with a reason Claude can answer. strict: also judge ordinary edits inside the project, and note the cases advisory mode keeps to itself. A classifier judgment never prompts you in any of the three; a code-rule match does, under pattern_trips.",
       "default": "advisory",
       "options": [
         "off",
@@ -41,9 +41,20 @@
     },
     "ask_on_trip": {
       "type": "boolean",
-      "title": "Ask me when a call is denied",
-      "description": "Turn the tripwire's deny into a permission prompt, so you decide instead of Claude. Off by default: the point of this plugin is that it talks to the agent, not to you. It has no effect in dontAsk or bypassPermissions, where there is no prompt to show.",
+      "title": "Ask me when the classifier denies a call",
+      "description": "Turn a model, lint or commit tripwire's deny into a permission prompt, so you decide instead of Claude. Off by default: those judgments come from a classifier that can be wrong, and the plugin talks to the agent about them. It has no effect in dontAsk or bypassPermissions, where there is no prompt to show. Code-rule trips are governed by pattern_trips instead.",
       "default": false
+    },
+    "pattern_trips": {
+      "type": "string",
+      "title": "Who clears a code-rule trip",
+      "description": "What happens when a command matches a code rule (rm -rf of a home or root path, a force push to main, git reset --hard, mkfs, dd to a device, a recursive chmod 777, a fork bomb, or an attempt to turn this plugin off). ask: you approve or refuse it in Claude Code's permission prompt; in dontAsk or bypassPermissions it is denied. deny: always denied. advisory: the pre-0.7 behaviour, where the call is denied once to Claude and Claude may re-issue it with a `# jev:intended <why>` marker. The default is ask, because a marker is something the agent writes, and an agent reading an injected page can write one.",
+      "default": "ask",
+      "options": [
+        "ask",
+        "deny",
+        "advisory"
+      ]
     },
     "stop_check": {
       "type": "boolean",
@@ -122,6 +133,7 @@
         "CLAUDE_PLUGIN_OPTION_API_KEY": "${user_config.api_key}",
         "CLAUDE_PLUGIN_OPTION_GATE": "${user_config.gate}",
         "CLAUDE_PLUGIN_OPTION_ASK_ON_TRIP": "${user_config.ask_on_trip}",
+        "CLAUDE_PLUGIN_OPTION_PATTERN_TRIPS": "${user_config.pattern_trips}",
         "CLAUDE_PLUGIN_OPTION_STOP_CHECK": "${user_config.stop_check}",
         "CLAUDE_PLUGIN_OPTION_SCREEN_RESULTS": "${user_config.screen_results}",
         "CLAUDE_PLUGIN_OPTION_ROUTE_PROMPTS": "${user_config.route_prompts}",

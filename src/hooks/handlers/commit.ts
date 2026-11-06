@@ -116,7 +116,7 @@ export async function handleCommit(
 
     if (outcome.secretTrip) {
       const id = tripIdOf(fp);
-      const channel = tripChannel(config.askOnTrip, input.permission_mode);
+      const channel = tripChannel(config, input.permission_mode, "commit");
       const text = commitSecretTripText({ id, p: secretAnswer?.noul ?? 0 });
       const trip: Trip = { id, fingerprint: fp, tool_name: "Bash", ts: now, source: "commit", reason: "staged secret", denies: 1 };
       store.openTrip(sessionId, trip, now);

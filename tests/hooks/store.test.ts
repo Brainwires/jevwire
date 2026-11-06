@@ -238,6 +238,17 @@ describe("trips", () => {
   });
 });
 
+describe("the gate-error notice clock", () => {
+  it("round-trips a valid epoch and drops anything else on read", () => {
+    store.updateSession("s1", (s) => ({ ...s, gate_error_notice_at: 1_700_000_000_000 }));
+    expect(store.readSession("s1").gate_error_notice_at).toBe(1_700_000_000_000);
+    for (const bad of ["soon", -1, Number.NaN, Number.POSITIVE_INFINITY, null, {}]) {
+      store.writeSession("s1", { prompts: [], stop_blocks: 0, gate_error_notice_at: bad as unknown as number });
+      expect(store.readSession("s1").gate_error_notice_at, String(bad)).toBeUndefined();
+    }
+  });
+});
+
 describe("noted actions", () => {
   const NOW = 1_700_000_000_000;
 

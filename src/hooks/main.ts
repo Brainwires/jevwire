@@ -4,10 +4,15 @@
  *
  * Three rules shape this file:
  *
- * 1. **Fail open, silently.** Every failure — no key, a timeout, a network
- *    error, malformed stdin, a bug in a handler — ends as exit 0 with empty
- *    stdout. The error goes to the decision log. A permission hook that breaks
- *    someone's session because an API was down is worse than no hook.
+ * 1. **Fail open, and say so.** Every failure — no key, a timeout, a network
+ *    error, malformed stdin, a bug in a handler — lets the call through: exit 0,
+ *    never a deny, never a prompt. The error goes to the decision log. A
+ *    permission hook that breaks someone's session because an API was down is
+ *    worse than no hook. What it is not any more is silent: a tool-gate
+ *    judgment that errors or times out adds a rate-limited `systemMessage`
+ *    saying the call went through unjudged (see `handlePreToolUse`). Nothing
+ *    is promised for the no-daemon case — Claude Code drops a refused http
+ *    hook without a word, and SessionStart is where daemon trouble is reported.
  * 2. **stdout is protocol.** Nothing else is ever written there.
  * 3. **Bounded time.** The handler races a hard wall-clock timer well inside
  *    the 5-second `timeout` declared in hooks.json, so Claude Code never has to

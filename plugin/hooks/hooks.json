@@ -1,5 +1,5 @@
 {
-  "description": "jev: advisory judgments at the harness boundaries, addressed to Claude rather than to you. A hook can hand Claude a note about a call that already ran, or deny a call once with a reason Claude can answer by re-issuing it with `# jev:intended <why>`. None of them can emit permissionDecision \"allow\", and none of them prompts you unless you set ask_on_trip. The PreToolUse matcher includes Agent and Task, which are never judged: the hook records the task a subagent was given so the subagent's own calls are judged against it rather than against a prompt it never saw. Since 0.4.0 the hot-path hooks are `type: \"http\"` posts to a loopback daemon on 127.0.0.1:10522 that SessionStart starts; when it is not there they fail open in silence, which is what Claude Code does with a refused connection. Every command hook exits 0 with empty stdout on any error. Set JEV_HOOKS_DISABLE=1 to turn all of them off, gate=off for the tool gate alone, or JEV_DAEMON_DISABLE=1 to stop SessionStart starting a daemon.",
+  "description": "jev: advisory judgments at the harness boundaries, addressed to Claude rather than to you. A hook can hand Claude a note about a call that already ran, or deny a call once with a reason Claude can answer by re-issuing it with `# jev:intended <why>`. None of them can emit permissionDecision \"allow\". A classifier judgment never prompts you unless you set ask_on_trip; a code-rule match (rm -rf of a home or root path, a force push to main, an attempt to turn this plugin off, and a few more) does prompt you by default, under pattern_trips, because that one is yours to answer and not Claude's. The PreToolUse matcher includes Agent and Task, which are never judged: the hook records the task a subagent was given so the subagent's own calls are judged against it rather than against a prompt it never saw. Since 0.4.0 the hot-path hooks are `type: \"http\"` posts to a loopback daemon on 127.0.0.1:10522 that SessionStart starts; when it is not there they fail open in silence, which is what Claude Code does with a refused connection. With the daemon up, a tool-gate judgment that errors or times out still lets the call through, and says so to you at most once every ten minutes. Every command hook exits 0 with empty stdout on any error. Set JEV_HOOKS_DISABLE=1 to turn all of them off, gate=off for the tool gate alone, or JEV_DAEMON_DISABLE=1 to stop SessionStart starting a daemon.",
   "hooks": {
     "SessionStart": [
       {
@@ -38,7 +38,7 @@
     ],
     "PreToolUse": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__.*",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|Agent|Task|mcp__.*",
         "hooks": [
           {
             "type": "http",
@@ -74,7 +74,7 @@
         ]
       },
       {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit",
         "hooks": [
           {
             "type": "http",
@@ -92,7 +92,7 @@
     ],
     "PostToolUseFailure": [
       {
-        "matcher": "Bash|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
+        "matcher": "Bash|PowerShell|Write|Edit|MultiEdit|NotebookEdit|mcp__.*",
         "hooks": [
           {
             "type": "http",

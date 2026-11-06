@@ -29293,6 +29293,7 @@ var WAIT_MS = 2e3;
 // src/hooks/config.ts
 var GATE_LEVELS = ["off", "advisory", "strict"];
 var LINT_LEVELS = ["off", "tripwire", "advisory"];
+var PATTERN_TRIP_POLICIES = ["ask", "deny", "advisory"];
 var GATE_MODE_MIGRATION = {
   off: "off",
   standard: "advisory",
@@ -29312,6 +29313,9 @@ var HOOK_DEFAULTS = {
   maxRetries: 0,
   gate: "advisory",
   askOnTrip: false,
+  // The first policy is the secure one, and the only line in the hook source
+  // that spells it is the list itself (`tests/hooks/never-allow.test.ts`).
+  patternTrips: PATTERN_TRIP_POLICIES[0],
   stopCheck: true,
   screenResults: true,
   routePrompts: false,
@@ -29375,6 +29379,16 @@ function readLint(env, warnings) {
   warnings.push(`lint=${JSON.stringify(raw)} is not one of off|tripwire|advisory; using ${HOOK_DEFAULTS.lint}.`);
   return HOOK_DEFAULTS.lint;
 }
+function readPatternTrips(env, warnings) {
+  const raw = read(env, "pattern_trips", "JEV_PATTERN_TRIPS");
+  if (raw === void 0) return HOOK_DEFAULTS.patternTrips;
+  const lowered = raw.toLowerCase();
+  if (PATTERN_TRIP_POLICIES.includes(lowered)) return lowered;
+  warnings.push(
+    `pattern_trips=${JSON.stringify(raw)} is not one of ${PATTERN_TRIP_POLICIES.join("|")}; using ${HOOK_DEFAULTS.patternTrips}.`
+  );
+  return HOOK_DEFAULTS.patternTrips;
+}
 function loadHookConfig(env = process.env) {
   const warnings = [];
   const gateRaw = read(env, "gate", "JEV_GATE");
@@ -29422,6 +29436,7 @@ function loadHookConfig(env = process.env) {
     maxRetries: HOOK_DEFAULTS.maxRetries,
     gate: gate2,
     askOnTrip: readBool(env, "ask_on_trip", HOOK_DEFAULTS.askOnTrip, warnings, "JEV_ASK_ON_TRIP"),
+    patternTrips: readPatternTrips(env, warnings),
     stopCheck: readBool(env, "stop_check", HOOK_DEFAULTS.stopCheck, warnings, "JEV_STOP_CHECK"),
     screenResults: readBool(env, "screen_results", HOOK_DEFAULTS.screenResults, warnings, "JEV_SCREEN_RESULTS"),
     routePrompts: readBool(env, "route_prompts", HOOK_DEFAULTS.routePrompts, warnings, "JEV_ROUTE_PROMPTS"),
@@ -29605,7 +29620,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.6.6";
+var HOOK_VERSION = "0.7.0";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
@@ -40138,7 +40153,7 @@ async function run7(model, input2, config2, signal) {
 
 // src/server.ts
 var SERVER_NAME = "jevwire";
-var SERVER_VERSION = "0.6.6";
+var SERVER_VERSION = "0.7.0";
 var ANNOTATIONS = { readOnlyHint: true, openWorldHint: true };
 function ok(output2) {
   return {

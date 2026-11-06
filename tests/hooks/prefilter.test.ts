@@ -344,6 +344,18 @@ describe("prefilterBash", () => {
     ["chmod -R a+rwx .", "escalate", "recursive a+rwx"],
     ["chmod 777 file", "judge", "non-recursive 777"],
     [":(){ :|:& };:", "escalate", "fork bomb"],
+
+    // --- hard patterns: what must stay non-escalating (#6) ------------------
+    ["rm -rf /tmp/foo/bar", "judge", "a deep absolute path is an ordinary delete"],
+    ["rm -rf /Users/x/proj/build", "judge", "a build directory under a home is ordinary"],
+    ["bash -c 'echo hi'", "judge", "a shell string that does nothing wide"],
+    ["git push origin main", "judge", "a plain push to main is not a force push"],
+    ["chmod -R 755 .", "judge", "recursive but not world-writable"],
+    ["chmod -R u+w .", "judge", "recursive write for the owner only"],
+    ["chmod -R +w .", "judge", "no who means the umask applies, so not asserted"],
+    ["chmod -r 777 /", "judge", "lowercase -r is not chmod's recursive flag"],
+    ["xargs -I {} rm -rf {} < list", "judge", "xargs rm whose operands come from an unseen file"],
+    ["sudo -u root ls", "judge", "a wrapper around something harmless"],
   ];
 
   for (const [command, expected, label] of cases) {
@@ -393,6 +405,399 @@ describe("prefilterBash", () => {
     expect(prefilterBash("ls && FOO=bar ls").kind).toBe("judge");
     expect(prefilterBash("git status && make deploy").kind).toBe("judge");
     expect(prefilterBash("ls && ./evil").kind).toBe("judge");
+  });
+
+  /**
+   * Issue #6: every one of these came back `judge` on 0.6.3, because the hard
+   * patterns looked at the first word and the first word was a wrapper, a
+   * shell, or `eval`. A `judge` with no key or a timed-out call is a pass.
+   */
+  describe("hard patterns see through wrappers and shell strings (#6)", () => {
+    const evasions: [string, string][] = [
+      ["sudo rm -rf /", "rm-rf-wide"],
+      ["env rm -rf ~", "rm-rf-wide"],
+      ["command rm -rf ~", "rm-rf-wide"],
+      ["bash -c 'rm -rf ~'", "rm-rf-wide"],
+      ['sh -c "rm -rf /"', "rm-rf-wide"],
+      ["eval 'rm -rf ~'", "rm-rf-wide"],
+      ["echo ~ | xargs rm -rf", "rm-rf-wide"],
+      ["sudo mkfs.ext4 /dev/sda1", "mkfs"],
+      // The wrappers' own options and operands are stepped over, not mistaken
+      // for the command.
+      ["sudo -u root rm -rf /", "rm-rf-wide"],
+      ["sudo FOO=bar rm -rf ~", "rm-rf-wide"],
+      ["doas rm -rf /", "rm-rf-wide"],
+      ["pkexec --user root rm -rf /", "rm-rf-wide"],
+      ["env -i FOO=bar rm -rf ~", "rm-rf-wide"],
+      ["env -u PATH rm -rf ~", "rm-rf-wide"],
+      ["builtin rm -rf ~", "rm-rf-wide"],
+      ["exec rm -rf ~", "rm-rf-wide"],
+      ["nice -n 10 rm -rf /Users/x", "rm-rf-wide"],
+      ["nice -10 rm -rf /Users/x", "rm-rf-wide"],
+      ["nohup rm -rf ~", "rm-rf-wide"],
+      ["time rm -rf ~", "rm-rf-wide"],
+      ["timeout 5 rm -rf /etc", "rm-rf-wide"],
+      ["timeout -s KILL 5s rm -rf /etc", "rm-rf-wide"],
+      ["stdbuf -oL rm -rf ~", "rm-rf-wide"],
+      ["ionice -c 3 rm -rf ~", "rm-rf-wide"],
+      ["chrt -f 99 rm -rf ~", "rm-rf-wide"],
+      ["busybox rm -rf /var", "rm-rf-wide"],
+      ["toybox rm -rf /var", "rm-rf-wide"],
+      ["printf '%s' / | xargs -0 -r -n 1 rm -rf", "rm-rf-wide"],
+      ["echo ~ | xargs -I {} rm -rf {}", "rm-rf-wide"],
+      ["sudo env rm -rf ~", "rm-rf-wide"],
+      ["sudo git push --force origin main", "git-force-push-main"],
+      ["sudo chmod -R 777 /", "chmod-777"],
+      ["sudo dd if=/dev/zero of=/dev/sda", "dd-to-device"],
+      // Shell strings, with the flag in a cluster, and nested.
+      ["bash -lc 'rm -rf ~'", "rm-rf-wide"],
+      ["bash -ec 'rm -rf ~'", "rm-rf-wide"],
+      ["zsh -c 'rm -rf /'", "rm-rf-wide"],
+      ["dash -c 'rm -rf /'", "rm-rf-wide"],
+      ["ksh -c 'rm -rf /'", "rm-rf-wide"],
+      ["fish -c 'rm -rf /'", "rm-rf-wide"],
+      ["bash -o pipefail -c 'rm -rf ~'", "rm-rf-wide"],
+      ["sh -c -- 'rm -rf /'", "rm-rf-wide"],
+      ["bash -c \"rm -rf '/'\"", "rm-rf-wide"],
+      ["bash -c 'ls; rm -rf ~'", "rm-rf-wide"],
+      ["bash -c 'git reset --hard'", "git-reset-hard"],
+      ["sh -c 'psql -c \"DROP TABLE users\"'", "sql-drop"],
+      ["eval rm -rf ~", "rm-rf-wide"],
+      ["eval \"rm -rf /\"", "rm-rf-wide"],
+      ["sudo bash -lc 'sudo rm -rf $HOME'", "rm-rf-wide"],
+      ["bash -c \"bash -c 'bash -c \\\"rm -rf /\\\"'\"", "rm-rf-wide"],
+      ["ls && sudo rm -rf /", "rm-rf-wide"],
+    ];
+    for (const [command, pattern] of evasions) {
+      it(`escalates ${JSON.stringify(command)} as ${pattern}`, () => {
+        const verdict = prefilterBash(command);
+        expect(verdict.kind).toBe("escalate");
+        if (verdict.kind === "escalate") expect(verdict.pattern).toBe(pattern);
+      });
+    }
+
+    it("stops following shell strings at the nesting limit", () => {
+      // Three shells deep is followed; four is not. The limit exists so a
+      // pathological command cannot make the prefilter do unbounded work.
+      const wrap = (levels: number): string => {
+        let command = "rm -rf /";
+        for (let level = 0; level < levels; level += 1) command = `bash -c ${JSON.stringify(command)}`;
+        return command;
+      };
+      expect(prefilterBash(wrap(3)).kind).toBe("escalate");
+      expect(prefilterBash(wrap(4)).kind).toBe("judge");
+    });
+
+    it("does not read a wrapper's lookup form as running anything", () => {
+      expect(prefilterBash("command -v rm").kind).toBe("skip");
+    });
+
+    it("leaves xargs rm alone when nothing visible feeds it a wide target", () => {
+      expect(prefilterBash("xargs rm -rf").kind).toBe("judge");
+      expect(prefilterBash("echo build | xargs rm -rf").kind).toBe("judge");
+      expect(prefilterBash("cat list | xargs rm -rf").kind).toBe("judge");
+    });
+  });
+
+  describe("hard pattern coverage (#6)", () => {
+    const widened: [string, string][] = [
+      ["rm -rf /Users/x", "rm-rf-wide"],
+      ["rm -rf /Users/x/", "rm-rf-wide"],
+      ["rm -rf /Users/x/*", "rm-rf-wide"],
+      ["rm -rf /home/x", "rm-rf-wide"],
+      ["rm -rf /root", "rm-rf-wide"],
+      ["rm -rf /root/", "rm-rf-wide"],
+      ["rm -rf ~bob", "rm-rf-wide"],
+      ["rm -rf ~bob/", "rm-rf-wide"],
+      ["rm -rf /usr", "rm-rf-wide"],
+      ["rm -rf /etc/", "rm-rf-wide"],
+      ["rm -rf /var/*", "rm-rf-wide"],
+      ["rm -rf /System", "rm-rf-wide"],
+      ["rm -rf /Library", "rm-rf-wide"],
+      ["rm -rf /tmp", "rm-rf-wide"],
+      ["rm -rf --no-preserve-root /usr", "rm-rf-wide"],
+      ["git push origin +main", "git-force-push-main"],
+      ["git push origin +master", "git-force-push-main"],
+      ["git push origin +HEAD:main", "git-force-push-main"],
+      ["git push origin +refs/heads/main", "git-force-push-main"],
+      ["git push --force-with-lease origin main", "git-force-push-main"],
+      ["git push --force-with-lease=main:abc123 origin main", "git-force-push-main"],
+      ["git push --force-if-includes --force-with-lease origin master", "git-force-push-main"],
+      ["chmod -fR 777 /", "chmod-777"],
+      ["chmod -Rv 777 /", "chmod-777"],
+      ["chmod -R 0777 .", "chmod-777"],
+      ["chmod -R 666 .", "chmod-777"],
+      ["chmod -R 757 .", "chmod-777"],
+      ["chmod -R 1777 .", "chmod-777"],
+      ["chmod -R o+w .", "chmod-777"],
+      ["chmod -R a+rwx .", "chmod-777"],
+      ["chmod -R a=rwx .", "chmod-777"],
+      ["chmod -R go+w .", "chmod-777"],
+      ["chmod -R ugo+w .", "chmod-777"],
+      ["chmod -R u+x,o+w .", "chmod-777"],
+      ["chmod --recursive a+w .", "chmod-777"],
+    ];
+    for (const [command, pattern] of widened) {
+      it(`escalates ${JSON.stringify(command)} as ${pattern}`, () => {
+        const verdict = prefilterBash(command);
+        expect(verdict.kind).toBe("escalate");
+        if (verdict.kind === "escalate") expect(verdict.pattern).toBe(pattern);
+      });
+    }
+
+    /**
+     * The gate protects its own off switch. Each of these is a tool call the
+     * agent can make, and each is a code-rule trip so the user answers it.
+     */
+    describe("jev-self-disable", () => {
+      const cwd = "/home/dev/project";
+      const dataDir = "/home/dev/.claude/plugins/data/jev-brainwires-jevwire";
+      const options = { cwd, strict: false, dataDir };
+      const name = (verdict: ReturnType<typeof prefilterBash>): string =>
+        verdict.kind === "escalate" ? verdict.pattern : verdict.kind;
+
+      it("trips the hook binary's disable subcommand, however it is spelled or wrapped", () => {
+        for (const command of [
+          "node /x/plugins/cache/m/jev/0.7.0/dist/hook.mjs disable",
+          'node "${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs" disable "${CLAUDE_SESSION_ID}"',
+          "./plugin/dist/hook.mjs disable",
+          "sudo node dist/hook.mjs disable",
+          "JEV_HOOKS_DATA_DIR=/tmp node dist/hook.mjs disable",
+          "bash -c 'node dist/hook.mjs disable'",
+          "ls && node dist/hook.mjs disable",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).toBe("jev-self-disable");
+        }
+      });
+
+      it("leaves the other subcommands alone", () => {
+        for (const sub of ["status", "enable", "enable s1", "why 3 trips", "calibrate", "daemon-ctl status", "SessionStart"]) {
+          const command = `node dist/hook.mjs ${sub}`;
+          expect(prefilterBash(command, options).kind, command).toBe("judge");
+        }
+        expect(prefilterBash("node dist/hooks.mjs disable", options).kind).toBe("judge");
+        expect(prefilterBash("cat hook.mjs", options).kind).toBe("skip");
+      });
+
+      it("trips a write, delete or redirect into the data directory, by any spelling", () => {
+        for (const command of [
+          `touch ${dataDir}/disabled`,
+          `echo 1 > ${dataDir}/disabled`,
+          `rm -rf ${dataDir}`,
+          `rm ${dataDir}/sessions/s1.json`,
+          `truncate -s 0 ${dataDir}/decisions.jsonl`,
+          `ls | tee ${dataDir}/decisions.jsonl`,
+          `cp /dev/null ${dataDir}/disabled`,
+          `mv ${dataDir} /tmp/gone`,
+          "touch ~/.claude/plugins/data/jev-brainwires-jevwire/disabled",
+          "rm -rf $HOME/.claude/plugins/data/jev-brainwires-jevwire",
+          "rm -rf ${HOME}/.claude/plugins/data/jev-brainwires-jevwire/",
+          `sudo touch ${dataDir}/disabled`,
+          `touch ../.claude/plugins/data/jev-brainwires-jevwire/disabled`,
+        ]) {
+          expect(name(prefilterBash(command, options)), command).toBe("jev-self-disable");
+        }
+      });
+
+      it("does not trip reads of the data directory, writes beside it, or a wrapper-less tilde when the home is unknown", () => {
+        for (const command of [
+          `cat ${dataDir}/decisions.jsonl`,
+          `ls ${dataDir}`,
+          `grep trip ${dataDir}/decisions.jsonl`,
+          "touch ~/.claude/plugins/data/jev-brainwires-jevwire-2/disabled",
+          "touch /home/dev/.claude/plugins/data/other/disabled",
+          "touch ~/.claude/plugins/data",
+          "rm -rf ~/.claude/plugins/data/jev-brainwires-jevwirex",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).not.toBe("jev-self-disable");
+        }
+        // A data directory outside `~/.claude` has no known tilde spelling.
+        const elsewhere = { cwd, strict: false, dataDir: "/var/lib/jev" };
+        expect(name(prefilterBash("touch ~/var/lib/jev/disabled", elsewhere))).not.toBe("jev-self-disable");
+        expect(name(prefilterBash("touch /var/lib/jev/disabled", elsewhere))).toBe("jev-self-disable");
+        // Without a data directory there is nothing to protect.
+        expect(prefilterBash(`touch ${dataDir}/disabled`, { cwd, strict: false }).kind).toBe("judge");
+      });
+
+      it("trips a Bash write to the harness settings only when the plugin is named", () => {
+        expect(name(prefilterBash('echo \'{"disableAllHooks": true}\' > ~/.claude/settings.json', options))).toBe("jev-self-disable");
+        expect(name(prefilterBash("cat > .claude/settings.local.json <<'EOF'\n{\"enabledPlugins\":{\"jev@x\":false}}\nEOF", options))).toBe("jev-self-disable");
+        expect(name(prefilterBash("cp /tmp/no-jev.json ~/.claude/plugins/installed_plugins.json", options))).toBe("jev-self-disable");
+        expect(prefilterBash('echo \'{"theme":"dark"}\' > ~/.claude/settings.json', options).kind).toBe("judge");
+        expect(prefilterBash("cat ~/.claude/settings.json", options).kind).toBe("judge");
+      });
+
+      it("trips a file-tool write into the data directory or a plugin-naming settings edit", () => {
+        const file = (toolName: string, toolInput: Record<string, unknown>) =>
+          prefilter({ toolName, toolInput, cwd, strict: false, dataDir });
+        const escalated = (verdict: ReturnType<typeof prefilter>): string =>
+          verdict.kind === "escalate" ? verdict.pattern : verdict.kind;
+
+        expect(escalated(file("Write", { file_path: `${dataDir}/disabled`, content: "" }))).toBe("jev-self-disable");
+        expect(escalated(file("Edit", { file_path: `${dataDir}/sessions/s1.json`, old_string: "a", new_string: "b" }))).toBe("jev-self-disable");
+        expect(escalated(file("Write", { file_path: "~/.claude/plugins/data/jev-brainwires-jevwire/disabled", content: "" }))).toBe("jev-self-disable");
+        expect(escalated(file("NotebookEdit", { notebook_path: `${dataDir}/x.ipynb`, new_source: "" }))).toBe("jev-self-disable");
+
+        const settings = "/home/dev/.claude/settings.json";
+        expect(escalated(file("Write", { file_path: settings, content: '{"disableAllHooks": true}' }))).toBe("jev-self-disable");
+        expect(escalated(file("Edit", { file_path: ".claude/settings.local.json", old_string: '"hooks": {', new_string: '"hooks": {}' }))).toBe("jev-self-disable");
+        expect(escalated(file("Edit", { file_path: settings, old_string: '"jev@brainwires-jevwire": true', new_string: "" }))).toBe("jev-self-disable");
+        expect(escalated(file("MultiEdit", { file_path: settings, edits: [{ old_string: "x", new_string: "y" }, { old_string: "a", new_string: '"JEV_GATE": "off"' }] }))).toBe("jev-self-disable");
+        // The registry files trip on any content: they hold nothing but plugins.
+        expect(escalated(file("Write", { file_path: "/home/dev/.claude/plugins/installed_plugins.json", content: "{}" }))).toBe("jev-self-disable");
+        expect(escalated(file("Write", { file_path: "/home/dev/.claude/plugins/config.json", content: '{"TYPESAFE_API_KEY":""}' }))).toBe("jev-self-disable");
+
+        // Negatives: a settings edit about something else is judged as before,
+        // and ordinary project files that merely mention the plugin are skipped.
+        expect(escalated(file("Edit", { file_path: settings, old_string: '"theme": "dark"', new_string: '"theme": "light"' }))).toBe("judge");
+        expect(escalated(file("Write", { file_path: `${cwd}/src/jev.ts`, content: "export const JEV_GATE = 'off'; // hooks" }))).toBe("skip");
+        expect(escalated(file("Write", { file_path: `${cwd}/README.md`, content: "set disableAllHooks and enabledPlugins" }))).toBe("skip");
+        expect(escalated(file("Write", { file_path: `${cwd}/settings.json`, content: '{"hooks": {}}' }))).toBe("skip");
+        expect(escalated(file("Write", { file_path: "/home/dev/.claude/plugins/data/other/x.json", content: "jev" }))).toBe("judge");
+      });
+    });
+
+    /** Audit follow-up: tampering with the install, the CLI, the daemon, and two more wide deletes. */
+    describe("jev-self-disable, second pass", () => {
+      const cwd = "/home/dev/project";
+      const dataDir = "/home/dev/.claude/plugins/data/jev-brainwires-jevwire";
+      const pluginRoot = "/home/dev/.claude/plugins/cache/brainwires-jevwire/jev/0.6.6";
+      const options = { cwd, strict: false, dataDir, pluginRoot };
+      const name = (verdict: ReturnType<typeof prefilterBash>): string =>
+        verdict.kind === "escalate" ? verdict.pattern : verdict.kind;
+      const file = (toolName: string, toolInput: Record<string, unknown>): string => {
+        const verdict = prefilter({ toolName, toolInput, cwd, strict: false, dataDir, pluginRoot });
+        return verdict.kind === "escalate" ? verdict.pattern : verdict.kind;
+      };
+
+      it("trips writes into the installed plugin and the plugin registry", () => {
+        for (const command of [
+          "echo x > ~/.claude/plugins/cache/x/jev/0.6.6/dist/hook.mjs",
+          "sed -i 's/deny/allow/' ~/.claude/plugins/cache/x/jev/0.6.6/hooks/hooks.json",
+          "rm -rf ~/.claude/plugins/cache/x/jev",
+          "cp /tmp/h.mjs /home/dev/.claude/plugins/marketplaces/brainwires-jevwire/plugins/jev/dist/hook.mjs",
+          'touch "${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs"',
+          "chmod 000 $CLAUDE_PLUGIN_ROOT/dist/hook.mjs",
+          `mv ${pluginRoot}/hooks/hooks.json /tmp/`,
+          "echo '{}' > ~/.claude/plugins/installed_plugins.json",
+          "rm ~/.claude/plugins/known_marketplaces.json",
+          "sudo tee /home/dev/.claude/plugins/installed_plugins.json < /dev/null",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).toBe("jev-self-disable");
+        }
+        expect(file("Write", { file_path: "/home/dev/.claude/plugins/cache/x/jev/0.6.6/dist/hook.mjs", content: "" })).toBe("jev-self-disable");
+        expect(file("Edit", { file_path: "~/.claude/plugins/cache/x/jev/0.6.6/hooks/hooks.json", old_string: "a", new_string: "b" })).toBe("jev-self-disable");
+        expect(file("Write", { file_path: `${pluginRoot}/dist/hook.mjs`, content: "" })).toBe("jev-self-disable");
+        expect(file("Write", { file_path: "/home/dev/.claude/plugins/installed_plugins.json", content: "{}" })).toBe("jev-self-disable");
+        expect(file("MultiEdit", { file_path: "~/.claude/plugins/known_marketplaces.json", edits: [{ old_string: "a", new_string: "b" }] })).toBe("jev-self-disable");
+      });
+
+      it("leaves other plugins, reads of the install, and sed without -i alone", () => {
+        for (const command of [
+          "cat ~/.claude/plugins/cache/x/jev/0.6.6/dist/hook.mjs",
+          "sed 's/a/b/' ~/.claude/plugins/cache/x/jev/0.6.6/hooks/hooks.json",
+          "touch ~/.claude/plugins/cache/x/other-plugin/1.0.0/dist/index.mjs",
+          "rm -rf ~/.claude/plugins/cache/x/other-plugin",
+          "echo x > ~/.claude/plugins/cache/x/jevish/dist/hook.mjs",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).not.toBe("jev-self-disable");
+        }
+        expect(file("Write", { file_path: "/home/dev/.claude/plugins/cache/x/other-plugin/1.0.0/dist/index.mjs", content: "jev" })).toBe("judge");
+        expect(file("Write", { file_path: "/home/dev/.claude/plugins/config.json", content: '{"theme":1}' })).toBe("judge");
+      });
+
+      it("trips the claude CLI turning the plugin off, by name or wholesale", () => {
+        for (const command of [
+          "claude plugin disable jev@brainwires-jevwire",
+          "claude plugin uninstall jev",
+          "claude plugin remove jev@brainwires-jevwire",
+          "claude plugin disable",
+          "claude plugin marketplace remove brainwires-jevwire",
+          "claude plugin marketplace rm",
+          "claude config set -g disableAllHooks true",
+          "claude config set enabledPlugins.jev@brainwires-jevwire false",
+          "claude config remove hooks.PreToolUse",
+          "sudo claude plugin disable jev",
+          "bash -c 'claude plugin disable jev'",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).toBe("jev-self-disable");
+        }
+        for (const command of [
+          "claude plugin list",
+          "claude plugin disable other-plugin",
+          "claude plugin marketplace remove other-market",
+          "claude config set -g theme dark",
+          "claude config get hooks",
+          "claude --version",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).not.toBe("jev-self-disable");
+        }
+      });
+
+      it("trips daemon-ctl stop and restart but not status", () => {
+        for (const sub of ["stop", "restart"]) {
+          const command = `node "\${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs" daemon-ctl ${sub}`;
+          expect(name(prefilterBash(command, options)), command).toBe("jev-self-disable");
+          expect(name(prefilterBash(`sh -c '${command}'`, options)), command).toBe("jev-self-disable");
+        }
+        expect(prefilterBash('node "${CLAUDE_PLUGIN_ROOT}/dist/hook.mjs" daemon-ctl status', options).kind).toBe("judge");
+        expect(prefilterBash("node hook.mjs daemon-ctl", options).kind).toBe("judge");
+      });
+
+      it("trips find deletes from a wide starting point, and rm -rf * after a cd to one", () => {
+        for (const command of [
+          "find / -name '*.log' -delete",
+          "find ~ -type f -delete",
+          "find /Users/dev -name x -exec rm -rf {} +",
+          "find /etc -name x -execdir rm {} \\;",
+          "find -L /var -delete",
+          "sudo find / -delete",
+          "cd ~ && rm -rf *",
+          "cd / ; rm -rf .",
+          "cd /Users/dev && rm -rf ./*",
+          "cd && rm -rf *",
+          "cd .. && rm -rf *",
+          "ls; cd ~; ls; rm -rf ./",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).toBe("rm-rf-wide");
+        }
+        for (const command of [
+          "find . -name '*.o' -delete",
+          "find src -name x -exec rm {} +",
+          "find / -name x",
+          "find / -name x -exec cat {} +",
+          "find /tmp/foo -delete",
+          "cd build && rm -rf *",
+          "cd ~ && cd proj && rm -rf *",
+          "cd ~ && rm -rf build",
+          "cd - && rm -rf *",
+          "rm -rf *",
+        ]) {
+          expect(name(prefilterBash(command, options)), command).not.toBe("rm-rf-wide");
+        }
+      });
+    });
+
+    it("keeps the negatives non-escalating", () => {
+      for (const command of [
+        "rm -rf ./build",
+        "rm -rf /tmp/foo/bar",
+        "rm -rf /Users/x/proj/build",
+        "rm -rf ~/proj",
+        "sudo ls",
+        "bash -c 'echo hi'",
+        "git push origin main",
+        "git push --force origin feature",
+        "git push --force-with-lease origin feature",
+        "git push origin +feature",
+        "chmod -R 755 .",
+        "chmod -R u+w .",
+        "chmod -R o-w .",
+        "chmod -R o=r .",
+      ]) {
+        expect(prefilterBash(command).kind, command).not.toBe("escalate");
+      }
+    });
   });
 });
 

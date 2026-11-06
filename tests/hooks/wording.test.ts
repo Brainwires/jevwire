@@ -72,7 +72,13 @@ const EVERY_TRIP: [string, string][] = [
     modelTripText({ id: "t-1a2b3c4d", tool: "Write", signals: SIGNALS, prompts: 3, p_unrelated: 0.86, sidecar: true }),
   ],
   ["pattern trip", patternTripText({ id: "t-1a2b3c4d", pattern: "rm-rf-wide", reason: "recursive delete of a home path" })],
+  ["pattern trip, ask", patternTripText({ id: "t-1a2b3c4d", pattern: "rm-rf-wide", reason: "recursive delete of a home path", needs: "ask" })],
+  ["pattern trip, deny", patternTripText({ id: "t-1a2b3c4d", pattern: "rm-rf-wide", reason: "recursive delete of a home path", needs: "deny" })],
+  ["pattern trip, marker refused", patternTripText({ id: "t-1a2b3c4d", pattern: "jev-self-disable", reason: "turning this plugin off", needs: "ask", tool: "Write", markerRefused: true })],
+  ["pattern trip, Write, advisory", patternTripText({ id: "t-1a2b3c4d", pattern: "jev-self-disable", reason: "turning this plugin off", tool: "Write" })],
   ["repeat", tripRepeatText({ id: "t-1a2b3c4d", attempt: 2, seconds: 12.4 })],
+  ["repeat, ask", tripRepeatText({ id: "t-1a2b3c4d", attempt: 2, seconds: 12.4, needs: "ask" })],
+  ["repeat, deny", tripRepeatText({ id: "t-1a2b3c4d", attempt: 2, seconds: 12.4, needs: "deny" })],
   ["injection", injectionNoteText({ tool: "WebFetch", p: 0.96 })],
   ["contradiction", contradictionNoteText({ tool: "WebFetch", p: 0.91 })],
   ["lint trip secret", lintTripText({ id: "t-1a2b3c4d", tool: "Edit", finding: "hardcodes_secret", p: 0.95 })],
@@ -243,6 +249,37 @@ describe("trip text", () => {
     expect(text).toContain("(attempt 3)");
     expect(text).toContain("denied 12s ago");
     expect(text.length).toBeLessThan(400);
+  });
+
+  /**
+   * Under `pattern_trips: ask`/`deny` a marker clears nothing, so the text
+   * must not teach the agent to write one. The advisory text still does.
+   */
+  it("invites a marker for a code-rule trip only under advisory", () => {
+    const base = { id: "t-1", pattern: "rm-rf-wide", reason: "recursive delete of a home path" };
+    expect(patternTripText(base)).toContain("# jev:intended");
+    expect(patternTripText({ ...base, needs: "advisory" })).toContain("# jev:intended");
+    const ask = patternTripText({ ...base, needs: "ask" });
+    expect(ask).not.toContain("jev:intended");
+    expect(ask).toContain("cleared by the user, not by a marker");
+    expect(ask).toContain("asking the user to approve or refuse this exact call now");
+    const deny = patternTripText({ ...base, needs: "deny" });
+    expect(deny).not.toContain("jev:intended");
+    expect(deny).toContain("no prompt is shown in this mode");
+    expect(deny).toContain("pattern_trips");
+    for (const needs of ["ask", "deny"] as const) {
+      const repeat = tripRepeatText({ id: "t-1", attempt: 2, seconds: 3, needs });
+      expect(repeat, needs).not.toContain("jev:intended");
+      expect(repeat, needs).toContain("cleared by the user, not by a marker");
+    }
+  });
+
+  it("names the tool, and says a refused marker was refused", () => {
+    const text = patternTripText({ id: "t-1", pattern: "jev-self-disable", reason: "turning this plugin off", needs: "ask", tool: "Write", markerRefused: true });
+    expect(text).toContain("this Write call was not run");
+    expect(text).toContain("marker on this re-issue was recorded and did not clear it");
+    // The advisory text for a non-Bash tool offers the sidecar with the real id.
+    expect(patternTripText({ id: "t-1", pattern: "jev-self-disable", reason: "x", tool: "Write" })).toContain("true # jev:intended t-1:");
   });
 });
 
