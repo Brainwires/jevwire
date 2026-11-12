@@ -7,6 +7,30 @@ Code plugin is `jev`; the repository was renamed to jevwire after 0.3.0.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] — 2026-11-12
+
+### Security
+
+- **A `git commit` prefix no longer skips the pattern trips**
+  ([GHSA-qmjf-78g5-f7ch](https://github.com/Brainwires/jevwire/security/advisories/GHSA-qmjf-78g5-f7ch),
+  0.6.2–0.7.0). Any Bash command containing `git commit` was handed to the commit-time lint and
+  returned before the code rules and the gate, so `git commit -m x && <anything>` (or `;`, `|`, a
+  newline, a subshell, `git -c … commit`) ran with no trip and, with nothing staged, no log entry.
+  The code rules now run first for every call, and only a lone `git commit` (nothing chained,
+  substituted, redirected or grouped around it; Claude Code's quoted here-document message is
+  still accepted) takes the commit lint in place of the gate. Any other command that contains a
+  commit is judged like every other call, and gets the commit lint as well once the gate has let
+  it through. Thanks to @Tellurium-App for the report.
+- **Pattern trips see inside substitutions**
+  ([GHSA-99rf-hmp7-f3jf](https://github.com/Brainwires/jevwire/security/advisories/GHSA-99rf-hmp7-f3jf),
+  up to 0.7.0, found while fixing the above). The code rules, `jev-self-disable` included, now read
+  the commands in `$( … )`, backticks, `<( … )` / `>( … )`, `$(( … ))`, unquoted here-document
+  bodies, and a script handed to a shell on stdin (`bash <<'EOF'`, `bash <<< '…'`,
+  `echo '…' | sh`). `echo "$(git reset --hard)"` used to reach only the model gate, and nothing at
+  all with no API key. Nested code (substitutions and `sh -c` / `eval` strings, mixed) is followed
+  eight levels deep, up from three for shell strings; anything deeper trips the new
+  `nesting-too-deep` rule instead of going through unread.
+
 ## [0.7.0] — 2026-11-06
 
 ### Security

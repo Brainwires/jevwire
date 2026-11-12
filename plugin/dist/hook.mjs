@@ -856,7 +856,7 @@ function openLog(dataDir) {
 }
 
 // src/hooks/version.ts
-var HOOK_VERSION = "0.7.0";
+var HOOK_VERSION = "0.7.1";
 
 // src/hooks/daemon/control.ts
 function isAlive(pid) {
