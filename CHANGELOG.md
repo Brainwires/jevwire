@@ -29,10 +29,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **The same marked call now gets the same answer.** A marker on a call with no trip open against it
   was stripped and ignored, so the call was judged and refused — and that refusal opened a trip, so
   the identical call a moment later was accepted as its re-issue. The marker now has one verdict per
-  call, decided before the open-trip lookup: a verified marker passes the call whether or not a trip
-  is open (`marker-pass`; under `legacy_markers`, so does an accepted unquoted one), a refused one is
-  denied every time (`marker-unverified`), and a code-rule trip under `pattern_trips: ask` or `deny`
-  still outranks any marker.
+  call, decided before the open-trip lookup, and the judgment still runs: a verified marker on a call
+  the judgment trips answers that trip on the spot (`marker-pass`, no trip opened), on a call the
+  judgment passes it is logged as verified and unused, and it never skips the classifier. A refused
+  marker is denied every time (`marker-unverified`), even on a call the classifier would pass. A
+  code-rule trip under `pattern_trips: ask` or `deny` still outranks any marker, and under
+  `legacy_markers` an unquoted marker keeps 0.7.1's judge-first, answer-on-re-issue rule.
 - **A marker on a command that ends in a newline is read.** The marker was taken from the text after
   the last newline, which for a command ending in `\n` is empty: the marker went unread, became part
   of the fingerprint, and the re-issue was told it was "still without a marker" with the marker on
@@ -52,7 +54,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   against, standing instructions included, and the log records them.
 - `/jev:why` prints, for each marker, the user message its quote matched (or why it was refused) and
   the standing instructions a judgment read; `/jev:status` and `/jev:calibrate` count verified,
-  refused and pre-emptive markers.
+  refused, trip-answering and unused markers.
 
 ## [0.7.1] — 2026-11-12
 

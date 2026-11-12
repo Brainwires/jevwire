@@ -253,6 +253,12 @@ export interface DecisionRecord {
    * quote), or `legacy` (accepted on trust under `legacy_markers`).
    */
   marker_check?: "verified" | "unverified" | "legacy";
+  /**
+   * A verified marker rode on a judged call: `true` when it answered the trip
+   * the judgment raised (`marker-pass`), `false` when the judgment passed the
+   * call on its own and the marker was not needed.
+   */
+  marker_used?: boolean;
   /** Why an unverified marker was refused. */
   marker_refusal?: "no-quote" | "empty" | "too-short" | "not-found";
   /** The user message a verified quote was found in, redacted and clamped, and how many messages ago. */

@@ -262,7 +262,7 @@ export function statusReport(
     `  tripwires: ${count("trip")} opened, ${count("trip-repeat")} repeats, ${count("reissue")} re-issued (${count(
       "reissue-ran",
     )} ran, ${count("reissue-failed")} failed)`,
-    `  markers: ${count("affirm")} sidecar affirmations, ${count("marker-pass")} passed on a verified quote, ${count(
+    `  markers: ${count("affirm")} sidecar affirmations, ${count("marker-pass")} answered a trip on a verified quote, ${count(
       "marker-unverified",
     ) + count("affirm-unverified")} refused (quote not the user's), ${count("marker-unmatched")} on user-owned code-rule calls, ${count(
       "marker-short",
@@ -365,6 +365,7 @@ export function whyReport(store: Store, limit = 3, filter: WhyFilter = "all"): s
     if (record.marker_check === "verified" && record.marker_match !== undefined) {
       const ago = record.marker_match.age === 0 ? "the latest user message" : `the user message ${record.marker_match.age} back`;
       lines.push(`  quote verified in ${ago}: ${record.marker_match.message}`);
+      if (record.marker_used === false) lines.push("  marker not needed: the judgment passed the call on its own");
     } else if (record.marker_check === "unverified") {
       lines.push(`  quote refused: ${MARKER_REFUSAL_TEXT[record.marker_refusal ?? "not-found"]}`);
     } else if (record.marker_check === "legacy") {
@@ -650,7 +651,8 @@ export function calibrateReport(config: HookConfig, store: Store): string {
     "",
     "3. Marker hygiene",
     `  markers refused because the quote was not the user's: ${decisions("marker-unverified").length + decisions("affirm-unverified").length}`,
-    `  markers that passed an untripped call on a verified quote: ${decisions("marker-pass").length}`,
+    `  tripped judgments answered on the spot by a verified quote: ${decisions("marker-pass").length}`,
+    `  verified markers on calls the judgment passed anyway (unused): ${log.filter((r) => r.marker_used === false).length}`,
     `  markers on user-owned code-rule calls (never honoured): ${decisions("marker-unmatched").length}`,
     `  markers too short to count as a reason (legacy_markers): ${decisions("marker-short").length}`,
     `  sidecar affirmations naming an unknown trip: ${decisions("affirm-unmatched").length}`,

@@ -168,6 +168,18 @@ describe("handlePreToolUse commit branch", () => {
     expect(out?.hookSpecificOutput?.permissionDecisionReason).toContain("hardcoded credential");
   });
 
+  it("lets a verified marker answer the secret trip the commit lint raises, with no trip opened", async () => {
+    stage("keys.ts", 'export const apiKey = "sk-live-abcdef0123456789xyz";\n');
+    const model = commitModel({ secret: 0.95 });
+    const deps = makeDeps(dataDir, { model });
+    deps.store.updateSession("s1", (s) => ({ ...s, prompts: ["commit the test fixture key as it is"] }));
+    const out = await handlePreToolUse(commit('git commit -m "add client" # jev:intended "commit the test fixture key" it is a fixture'), deps);
+    expect(out).toBeUndefined();
+    expect(model.calls).toHaveLength(1);
+    expect(deps.store.readLog().at(-1)).toMatchObject({ decision: "marker-pass", source: "commit", marker_used: true, marker_check: "verified" });
+    expect(deps.store.liveTrips("s1", 1_700_000_000_000)).toEqual([]);
+  });
+
   it("notes a diff scored as several independent changes", async () => {
     stage("a.ts", "export const a = 1;\n");
     const deps = makeDeps(dataDir, { model: commitModel({ scopeP3: 0.9 }) });

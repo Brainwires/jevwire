@@ -159,7 +159,7 @@ describe("statusReport", () => {
     store.append(record({ decision: "marker-unverified" }));
     store.append(record({ decision: "affirm-unverified" }));
     expect(statusReport(testConfig(dir), store, NOW)).toContain(
-      "markers: 1 sidecar affirmations, 1 passed on a verified quote, 2 refused (quote not the user's), 1 on user-owned code-rule calls, 1 too short",
+      "markers: 1 sidecar affirmations, 1 answered a trip on a verified quote, 2 refused (quote not the user's), 1 on user-owned code-rule calls, 1 too short",
     );
   });
 
@@ -260,9 +260,18 @@ describe("whyReport", () => {
       }),
     );
     store.append(record({ decision: "marker-unverified", marker_check: "unverified", marker_refusal: "not-found", affirmation: '"ship it all" ok' }));
+    store.append(
+      record({
+        decision: "note",
+        marker_check: "verified",
+        marker_used: false,
+        marker_match: { age: 0, message: "ship the parser fix today" },
+      }),
+    );
     store.append(record({ decision: "marker-pass", marker_check: "legacy", affirmation: "the user asked for it" }));
     for (const filter of ["all", "trips"] as const) {
-      const report = whyReport(store, 3, filter);
+      const report = whyReport(store, 4, filter);
+      if (filter === "all") expect(report).toContain("marker not needed: the judgment passed the call on its own");
       expect(report, filter).toContain("quote verified in the user message 4 back: keep going with the jevwire fix, and its next release");
       expect(report, filter).toContain("→  marker-unverified");
       expect(report, filter).toContain("quote refused: the quoted text is not in any of the user's messages");
@@ -433,10 +442,12 @@ describe("calibrateReport", () => {
     store.append(record({ decision: "marker-short" }));
     store.append(record({ decision: "affirm-unmatched" }));
     store.append(record({ decision: "marker-unverified" }));
-    store.append(record({ decision: "marker-pass" }));
+    store.append(record({ decision: "marker-pass", marker_used: true }));
+    store.append(record({ decision: "allow", marker_used: false }));
     const report = calibrateReport(testConfig(dir), store);
     expect(report).toContain("markers refused because the quote was not the user's: 1");
-    expect(report).toContain("markers that passed an untripped call on a verified quote: 1");
+    expect(report).toContain("tripped judgments answered on the spot by a verified quote: 1");
+    expect(report).toContain("verified markers on calls the judgment passed anyway (unused): 1");
     expect(report).toContain("markers on user-owned code-rule calls (never honoured): 2");
     expect(report).toContain("markers too short to count as a reason (legacy_markers): 1");
     expect(report).toContain("sidecar affirmations naming an unknown trip: 1");

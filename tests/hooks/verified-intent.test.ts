@@ -111,16 +111,28 @@ describe("checkMarker", () => {
 });
 
 describe("a marked call gets the same answer every time", () => {
-  it("passes a verified marker on the first call and on the identical second call", async () => {
+  it("passes a verified marker on the first call and on the identical second call, judging both", async () => {
     const model = new FakeModel(block);
     const deps = rig({ model });
     const command = `${CURL} # jev:intended "keep going with the jevwire fix" this is its release step`;
     expect(await handlePreToolUse(input(command), deps)).toBeUndefined();
     expect(await handlePreToolUse(input(command), deps)).toBeUndefined();
-    expect(model.calls).toHaveLength(0);
+    // Judged each time: the marker answers the trip, it does not skip the judgment.
+    expect(model.calls).toHaveLength(2);
     const records = deps.store.readLog().filter((r) => r.event === "PreToolUse");
     expect(records.map((r) => r.decision)).toEqual(["marker-pass", "marker-pass"]);
     expect(records[0]?.marker_match).toEqual({ age: 2, message: "keep going with the jevwire fix, and its next release" });
+    expect(deps.store.liveTrips("s1", NOW)).toEqual([]);
+  });
+
+  it("cannot be used to switch the classifier off: a passing judgment leaves the marker unused", async () => {
+    const allow = () => ({ ...block(), destructive: noul(0.02), outward_facing: noul(0.02), blast_radius: score(0, ["none", "local", "shared", "production"], 0.9) });
+    const model = new FakeModel(allow);
+    const deps = rig({ model });
+    await handlePreToolUse(input(`${CURL} # jev:intended "make it so"`), deps);
+    expect(model.calls).toHaveLength(1);
+    expect(deps.store.readLog().at(-1)).toMatchObject({ marker_check: "verified", marker_used: false });
+    expect(deps.store.readLog().at(-1)?.decision).not.toBe("marker-pass");
   });
 
   it("denies an unverified marker on the first call and on the identical second call", async () => {
@@ -203,11 +215,15 @@ describe("what counts as the user's words", () => {
     expect(await handlePreToolUse(input(command), deps)).toBeUndefined();
   });
 
-  it("accepts the unquoted form on trust only under legacy_markers", async () => {
+  it("accepts the unquoted form only under legacy_markers, and then with 0.7.1's judge-first rule", async () => {
     const command = `${CURL} # jev:intended the user asked for this payment`;
     expect((await handlePreToolUse(input(command), rig()))?.hookSpecificOutput?.permissionDecision).toBe("deny");
     const legacy = rig({ config: { legacyMarkers: true } });
+    // First call: the marker is unmatched, the call is judged and trips.
+    expect((await handlePreToolUse(input(command), legacy))?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    // The re-issue answers the trip it opened.
     expect(await handlePreToolUse(input(command), legacy)).toBeUndefined();
-    expect(legacy.store.readLog().at(-1)).toMatchObject({ decision: "marker-pass", marker_check: "legacy" });
+    expect(legacy.store.readLog().map((r) => r.decision).slice(-3)).toEqual(["marker-unmatched", "trip", "reissue"]);
+    expect(legacy.store.readLog().at(-1)?.marker_check).toBe("legacy");
   });
 });

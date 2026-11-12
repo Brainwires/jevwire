@@ -17,7 +17,7 @@ import { gitStagedDiff } from "../workspace.js";
 import type { NoulAnswer, ScoreAnswer } from "../../decision/types.js";
 import { MAX_NOTES_PER_PROMPT, NOTE_DEDUPE_TTL_MS } from "../advisory.js";
 import type { Deps, HookInput, HookOutput } from "../types.js";
-import { noteOutput, tripChannel, tripOutput } from "./pre-tool-use.js";
+import { noteOutput, tripChannel, tripOutput, type MarkerOverride } from "./pre-tool-use.js";
 
 /** Longest staged diff sent to the model (head + tail at hunk boundaries done by the reader). */
 const MAX_COMMIT_DIFF = 24_000;
@@ -165,10 +165,13 @@ export async function handleCommit(
   base: Partial<DecisionRecord> & { ts: string; session_id: string; event: string },
   fp: string,
   now: number,
+  /** A verified `# jev:intended` marker on the command: it answers a secret trip instead of a re-issue. */
+  override?: MarkerOverride,
 ): Promise<HookOutput | undefined> {
   const { config, store } = deps;
   const sessionId = input.session_id ?? "unknown";
   const cwd = input.cwd ?? process.cwd();
+  const unused: Partial<DecisionRecord> = override === undefined ? {} : { ...override.fields, marker_used: false };
   if (deps.model === null) return undefined;
 
   const staged = await gitStagedDiff(cwd);
@@ -226,7 +229,23 @@ export async function handleCommit(
         ...(outcome.secretTrip ? { hardcodes_secret: secretAnswer?.noul ?? 0 } : {}),
       },
       ...modelCost(result),
+      ...unused,
     } as DecisionRecord;
+
+    if (outcome.secretTrip && override !== undefined) {
+      // The judgment tripped and a verified marker quotes the user asking for
+      // it: answered now, no trip opened.
+      store.append({
+        ...record,
+        decision: "marker-pass",
+        fingerprint: fp,
+        source: "commit",
+        affirmation: override.affirmation,
+        ...override.fields,
+        marker_used: true,
+      });
+      return undefined;
+    }
 
     if (outcome.secretTrip) {
       const id = tripIdOf(fp);

@@ -54,7 +54,7 @@ import {
   type PatternTripNeeds,
 } from "../wording.js";
 import type { HookConfig } from "../config.js";
-import { checkMarker, markerAccepted, type MarkerCheck } from "../intent.js";
+import { checkMarker, type MarkerCheck } from "../intent.js";
 import { standingDirectives, standingTag, MAX_DIRECTIVE_CHARS, STANDING_PREFIX, type StandingDirective } from "../standing.js";
 import type { Deps, EscalatingDecision, HookInput, HookOutput } from "../types.js";
 
@@ -227,6 +227,14 @@ export function gateRequest(prompts: readonly string[], max: number, standing: r
   return { latest, previous: [...tagged, ...previous] };
 }
 
+/** A verified marker carried into a judgment, to answer a trip it raises. */
+export interface MarkerOverride {
+  /** The marker text, redacted and clamped. */
+  affirmation: string;
+  /** `markerFields` of the verdict. */
+  fields: Partial<DecisionRecord>;
+}
+
 /** The least budget a standing instruction is sent in. */
 const MIN_STANDING_ROOM = 80;
 
@@ -380,7 +388,6 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     store.append({ ...base, decision: "marker-short", fingerprint: fp, ...(open !== undefined ? { trip_id: open.id } : {}) });
   }
   const live = marker !== undefined && check !== undefined && check.status !== "short";
-  const accepted = live && markerAccepted(check);
   const quoteShown = marker?.quote === undefined ? {} : { quote: redactAndClamp(marker.quote, MAX_REASON_CHARS) };
 
   if (open !== undefined) {
@@ -484,54 +491,78 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
   // Before 0.7.2 it was stripped, logged and ignored, and the call was judged
   // as if it carried none — so a marked call could be refused, and the very
   // same call accepted a moment later because the refusal had opened a trip
-  // for it to answer. Now the marker gets the same verdict either way: a
-  // verified (or, in legacy mode, accepted) marker passes the call without a
-  // judgment, exactly as it would pass the re-issue; a refused one is denied
-  // with the reason. Only a code-rule trip the agent may not clear outranks it.
-  if (live) {
-    const userOwned = verdict.kind === "escalate" && !agentMayAffirm(config, "pattern");
-    if (userOwned) {
-      store.append({
-        ...base,
-        decision: "marker-unmatched",
-        fingerprint: fp,
-        ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
-        ...checked,
-      });
-    } else if (accepted) {
-      store.append({
-        ...base,
-        decision: "marker-pass",
-        fingerprint: fp,
-        affirmation: redactAndClamp(marker.reason ?? "", MAX_REASON_CHARS),
-        ...checked,
-        ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
-      });
-      if (input.tool_use_id !== undefined) {
-        store.rememberReissue(sessionId, { tool_use_id: input.tool_use_id, ts: now, tool_name: toolName });
-      }
-      return undefined;
-    } else if (check.status === "unverified") {
-      const channel = tripChannel(config, input.permission_mode, "model");
-      const text = markerUnverifiedText({ tool: toolName, why: check.why, ...quoteShown });
-      store.append({
-        ...base,
-        decision: "marker-unverified",
-        fingerprint: fp,
-        channel,
-        ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
-        ...checked,
-        emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
-        ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
-      });
-      return tripOutput(channel, text);
-    }
+  // for it to answer. Now the verdict above decides it, the same way every
+  // time, and the judgment still runs:
+  //
+  //  - unverified (the quote is not the user's, or there is none): denied with
+  //    the reason, whatever the classifier would have said — a fabricated
+  //    quote is worth surfacing even on a harmless call;
+  //  - verified: the call is judged as usual; if the judgment trips, the
+  //    marker overrides it (`marker-pass`, no trip opened), and if it does not,
+  //    the marker is logged as verified and unused. A marker never switches
+  //    the classifier off: it only answers a trip the classifier raised;
+  //  - legacy-accepted (unquoted, under `legacy_markers`): the 0.7.1 rule —
+  //    logged as unmatched, judged, and answerable only as a re-issue.
+  //
+  // A code-rule trip the agent may not clear outranks all of it.
+  const userOwned = verdict.kind === "escalate" && !agentMayAffirm(config, "pattern");
+  if (live && (userOwned || check.status === "legacy")) {
+    store.append({
+      ...base,
+      decision: "marker-unmatched",
+      fingerprint: fp,
+      ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
+      ...checked,
+    });
+  } else if (live && check.status === "unverified") {
+    const channel = tripChannel(config, input.permission_mode, "model");
+    const text = markerUnverifiedText({ tool: toolName, why: check.why, ...quoteShown });
+    store.append({
+      ...base,
+      decision: "marker-unverified",
+      fingerprint: fp,
+      channel,
+      ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
+      ...checked,
+      emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
+      ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
+    });
+    return tripOutput(channel, text);
   }
+  /** A verified marker standing by to answer a trip the judgment below may raise. */
+  const override: MarkerOverride | undefined =
+    live && !userOwned && check.status === "verified"
+      ? { affirmation: redactAndClamp(marker.reason ?? "", MAX_REASON_CHARS), fields: checked }
+      : undefined;
+  /** The fields a passing judgment's record carries when a verified marker went unused. */
+  const unused: Partial<DecisionRecord> = override === undefined ? {} : { ...override.fields, marker_used: false };
+  /** Pass a call whose judgment tripped, on the strength of a verified marker. */
+  const passOnMarker = (record: Partial<DecisionRecord>): undefined => {
+    store.append({
+      ...base,
+      ...record,
+      decision: "marker-pass",
+      fingerprint: fp,
+      affirmation: (override as MarkerOverride).affirmation,
+      ...(override as MarkerOverride).fields,
+      marker_used: true,
+      ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
+    } as DecisionRecord);
+    if (input.tool_use_id !== undefined) {
+      store.rememberReissue(sessionId, { tool_use_id: input.tool_use_id, ts: now, tool_name: toolName });
+    }
+    return undefined;
+  };
 
   if (verdict.kind === "escalate") {
     // Row 2: a code rule matched. Certain by construction; no model consulted.
     // Under `pattern_trips: ask` (the default) this is the user's call to
     // make, in the permission prompt; a marker from the agent will not clear it.
+    // Under `pattern_trips: advisory` the trip is the agent's to answer, so a
+    // verified marker answers it here instead of on a re-issue.
+    if (override !== undefined) {
+      return passOnMarker({ source: "pattern", reasons: [verdict.reason] });
+    }
     const id = tripIdOf(fp);
     const channel = tripChannel(config, input.permission_mode, "pattern");
     const text = patternTripText({
@@ -576,11 +607,15 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     config.lint !== "off" &&
     isGitCommit(typeof action.command === "string" ? action.command : undefined)
   ) {
-    return handleCommit(input, deps, action.command as string, base, fp, now);
+    return handleCommit(input, deps, action.command as string, base, fp, now, override);
   }
 
-  // Row 6: from here on a judgment is needed. No model means no opinion.
-  if (deps.model === null) return undefined;
+  // Row 6: from here on a judgment is needed. No model means no opinion, and
+  // a verified marker had nothing to answer.
+  if (deps.model === null) {
+    if (override !== undefined) store.append({ ...base, decision: "marker-unused", fingerprint: fp, affirmation: override.affirmation, ...unused });
+    return undefined;
+  }
 
   const session = store.readSession(sessionId);
 
@@ -710,6 +745,9 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     const prompts = userRequest === undefined ? 0 : 1 + userRequest.previous.length - standing.length;
 
     if (outcome.outcome === "trip") {
+      // The judgment tripped and a verified marker quotes the user asking for
+      // it: the marker answers the trip now, and no trip is opened.
+      if (override !== undefined) return passOnMarker({ ...record, source: "model", firm });
       const id = tripIdOf(fp);
       const channel = tripChannel(config, input.permission_mode, "model");
       const text = modelTripText({
@@ -775,6 +813,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       store.noteEmitted(sessionId, fp, now);
       store.append({
         ...record,
+        ...unused,
         decision: "note",
         channel: "note",
         firm,
@@ -788,6 +827,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     const suppressed = outcome.suppressed ?? "allow";
     store.append({
       ...record,
+      ...unused,
       decision: suppressed === "allow" ? "allow" : `silent-${suppressed}`,
       suppressed,
       ...(firm.length > 0 ? { firm } : {}),
@@ -797,7 +837,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     // gate has nothing to say, the commit in it still gets the commit lint.
     const command = typeof action.command === "string" ? action.command : undefined;
     if (toolName === "Bash" && config.lint !== "off" && mentionsGitCommit(command)) {
-      return handleCommit(input, deps, command as string, base, fp, now);
+      return handleCommit(input, deps, command as string, base, fp, now, override);
     }
     return undefined;
   } catch (error) {
@@ -826,6 +866,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     }
     store.append({
       ...base,
+      ...unused,
       decision: "error",
       fingerprint: fp,
       error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),

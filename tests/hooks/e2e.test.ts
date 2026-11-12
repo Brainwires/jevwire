@@ -159,7 +159,7 @@ describe("node plugin/dist/hook.mjs", () => {
     expect(why.stdout).not.toContain("→  note");
   }, 30_000);
 
-  it("passes an untripped call on a verified quote and denies one whose quote nobody wrote", async () => {
+  it("lets an untripped call with a verified quote through and denies one whose quote nobody wrote", async () => {
     const transcript = join(dir, "session.jsonl");
     writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { role: "user", content: "pay the March invoice now" } })}\n`);
     const verified = await runHook(
@@ -185,7 +185,8 @@ describe("node plugin/dist/hook.mjs", () => {
     expect(refused.stdout).toContain("is not in any of your user's messages");
     const calibrate = await runHook(["calibrate"], "", env);
     expect(calibrate.stdout).toContain("markers refused because the quote was not the user's: 1");
-    expect(calibrate.stdout).toContain("markers that passed an untripped call on a verified quote: 1");
+    // No API key: nothing judged, so the verified marker had no trip to answer.
+    expect(calibrate.stdout).toContain("verified markers on calls the judgment passed anyway (unused): 1");
   }, 20_000);
 
   it("fails open on a judge-class command with no API key", async () => {

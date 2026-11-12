@@ -179,10 +179,15 @@ marker is verified, not trusted:
   question you replied "yes" to, and not a message that says "yes, but not the deploy".
 - A quote that is not found is refused, out loud: the call is denied with `the quoted text "…" is not
   in any of your user's messages`, and an open trip stays open. There is no fallback to trust.
-- The same marked call gets the same answer every time. A verified marker passes the call whether or
-  not a trip is open against it (before 0.7.2 a marker on an untripped call was ignored, so the call
-  was refused once and then accepted on the identical retry); a refused one is denied every time. A
-  code-rule trip under `pattern_trips: ask` or `deny` is the one thing a marker never clears.
+- The same marked call gets the same answer every time, and a marker never skips the judgment. A call
+  carrying a verified marker is judged as usual: if the judgment passes it, it runs and the marker is
+  logged as verified but unused; if the judgment trips, the marker answers that trip on the spot
+  (`marker-pass`, no trip opened). Before 0.7.2 a marker on an untripped call was ignored, so the call
+  was refused once and then accepted on the identical retry. A refused marker is denied every time,
+  even on a call the classifier would have passed: a quote nobody wrote is worth surfacing. A
+  code-rule trip under `pattern_trips: ask` or `deny` is the one thing a marker never clears. Under
+  `legacy_markers` an accepted unquoted marker keeps 0.7.1's rule: judged first, and honoured only as
+  the re-issue of a trip.
 
 `/jev:why` prints each marker's text and, for a verified one, the user message it matched. For Write,
 Edit and MCP tools, which have no comment syntax, the marker arrives as a separate

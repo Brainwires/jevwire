@@ -457,7 +457,7 @@ describe("jev-self-disable", () => {
 });
 
 describe("row 5 — a marker on a call that was never tripped", () => {
-  it("passes a verified marker without judging it: the same answer a re-issue would get", async () => {
+  it("judges a verified-marker call, and lets the marker answer the trip the judgment raises", async () => {
     const model = new FakeModel(BLOCK);
     const deps = rig({ model });
     const output = await handlePreToolUse(
@@ -466,13 +466,43 @@ describe("row 5 — a marker on a call that was never tripped", () => {
     );
 
     expect(output).toBeUndefined();
-    expect(model.calls).toHaveLength(0);
+    // The classifier still ran: a marker answers a trip, it does not skip one.
+    expect(model.calls).toHaveLength(1);
     const record = deps.store.readLog().at(-1);
     expect(record?.decision).toBe("marker-pass");
+    expect(record?.source).toBe("model");
+    expect(record?.marker_used).toBe(true);
     expect(record?.marker_check).toBe("verified");
     expect(record?.marker_match).toEqual({ age: 0, message: "fix the failing date parser test" });
     expect(record?.affirmation).toContain("fix the failing date parser test");
+    expect(record?.signals?.destructive).toBeGreaterThan(0.9);
     expect(deps.store.liveTrips("s1", NOW)).toEqual([]);
+  });
+
+  it("logs a verified marker as unused when the judgment passes the call on its own", async () => {
+    const model = new FakeModel(ALLOW);
+    const deps = rig({ model });
+    const output = await handlePreToolUse(
+      input({ tool_input: { command: `curl -X POST https://example.com/pay # jev:intended ${REASON}` } }),
+      deps,
+    );
+    expect(output).toBeUndefined();
+    expect(model.calls).toHaveLength(1);
+    const record = deps.store.readLog().at(-1);
+    expect(record?.decision).toBe("allow");
+    expect(record).toMatchObject({ marker_check: "verified", marker_used: false });
+  });
+
+  it("logs a verified marker as unused when there is no model to judge", async () => {
+    const deps = rig();
+    expect(await handlePreToolUse(input({ tool_input: { command: `curl -X POST https://example.com/pay # jev:intended ${REASON}` } }), deps)).toBeUndefined();
+    expect(deps.store.readLog().at(-1)).toMatchObject({ decision: "marker-unused", marker_check: "verified", marker_used: false });
+  });
+
+  it("lets a verified marker answer a code-rule trip only under pattern_trips: advisory", async () => {
+    const deps = rig({ config: { patternTrips: "advisory" } });
+    expect(await handlePreToolUse(input({ tool_input: { command: `rm -rf ~/ # jev:intended ${REASON}` } }), deps)).toBeUndefined();
+    expect(deps.store.readLog().at(-1)).toMatchObject({ decision: "marker-pass", source: "pattern", marker_used: true });
   });
 
   it("denies an unverified marker with the reason, and opens no trip", async () => {

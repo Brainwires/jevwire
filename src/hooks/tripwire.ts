@@ -23,10 +23,12 @@
  *     wrote clears nothing. The unquoted 0.7.1 form is accepted on trust only
  *     under `legacy_markers`.
  *  2. The same marked call gets the same answer whether or not a trip is
- *     open: a marker that counts passes the call, and one that does not is
- *     refused with the reason. (Before 0.7.2 a marker on an untripped call was
- *     ignored, so the first call was refused and its identical re-issue
- *     accepted.) A code-rule trip the user owns still outranks any marker.
+ *     open, and a marker never skips the judgment: it only answers a trip.
+ *     On an untripped call the judgment runs, and a verified marker answers
+ *     the trip it raises on the spot; a marker that does not count is refused
+ *     with the reason. (Before 0.7.2 a marker on an untripped call was ignored,
+ *     so the first call was refused and its identical re-issue accepted.) A
+ *     code-rule trip the user owns still outranks any marker.
  *  3. Marker text never reaches Jev. It is removed before the action is built,
  *     so no text in a marker can move `in_scope`.
  *

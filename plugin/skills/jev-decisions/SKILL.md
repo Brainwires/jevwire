@@ -161,8 +161,9 @@ line starting with `[jev]`, that is this plugin's classifier, not the user:
 - **`[jev] … the quoted text "…" is not in any of your user's messages`** — the
   marker was checked and refused; nothing ran. Quote the user exactly, or, if the
   user never asked for this, stop and say so instead.
-- **A marker counts whether or not a trip is open.** A verified marker on a call
-  passes it without a judgment, the same answer a re-issue gets; a refused one is
+- **A marker answers a trip; it never skips the judgment.** A call carrying a
+  verified marker is still judged, and the marker clears only a trip that
+  judgment raises (on the spot, with no second call); a refused one is
   denied every time. It is a citation of the user's words, not a password: quote
   them only for an action they really ask for. A code-rule trip the user answers
   (a permission prompt) is never cleared by a marker.

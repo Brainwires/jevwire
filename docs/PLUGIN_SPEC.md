@@ -186,8 +186,12 @@ spaces) and found as whole words in one genuine user message from `transcript_pa
 not `isMeta`/`isSidechain`/`isCompactSummary`, no `tool_result` block, injected tags stripped) or the
 recorded prompts; under `MIN_QUOTE_WORDS = 3` words it has to equal the whole message. Unverified →
 deny (`marker-unverified` / `affirm-unverified`), never a fallback. One verdict per call, before the
-open-trip lookup: a verified marker on an untripped call passes (`marker-pass`), the same answer row 3
-gives; a code-rule trip under `ask`/`deny` still outranks it. `legacy_markers` (default off) accepts
+open-trip lookup. On an untripped call the judgment still runs: if it passes, the marker is logged
+verified and unused (`marker_used: false`, or `marker-unused` with no model); if it trips (model,
+commit secret, or a code rule under `advisory`), a verified marker answers it on the spot (`marker-pass`,
+`marker_used: true`, no trip opened); an unverified marker is denied up front whatever the judgment.
+A code-rule trip under `ask`/`deny` still outranks any marker. A legacy-accepted unquoted marker keeps
+the 0.7.1 rule (unmatched, judged, honoured only on the re-issue). `legacy_markers` (default off) accepts
 the unquoted form (`MIN_AFFIRM_CHARS = 12`). Standing instructions (`standing.ts`): up to
 `standing_directives` (default 3) directive prompts from the whole session, tagged with their age,
 are prepended to `request.previous`; cleared on a topic change. `TRIP_TTL_MS` = 30 min,

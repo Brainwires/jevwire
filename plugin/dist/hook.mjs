@@ -5717,10 +5717,11 @@ function countFiles(diff) {
 function countDeleted(diff) {
   return diff.split("\n").filter((l) => l.startsWith("-") && !l.startsWith("---")).length;
 }
-async function handleCommit(input, deps, command, base, fp, now) {
+async function handleCommit(input, deps, command, base, fp, now, override) {
   const { config, store } = deps;
   const sessionId = input.session_id ?? "unknown";
   const cwd = input.cwd ?? process.cwd();
+  const unused = override === void 0 ? {} : { ...override.fields, marker_used: false };
   if (deps.model === null) return void 0;
   const staged = await gitStagedDiff(cwd);
   if (staged === void 0 || staged.text.trim() === "") {
@@ -5765,8 +5766,21 @@ async function handleCommit(input, deps, command, base, fp, now) {
         ...outcome.message_describes !== void 0 ? { message_describes_diff: outcome.message_describes } : {},
         ...outcome.secretTrip ? { hardcodes_secret: secretAnswer?.noul ?? 0 } : {}
       },
-      ...modelCost(result)
+      ...modelCost(result),
+      ...unused
     };
+    if (outcome.secretTrip && override !== void 0) {
+      store.append({
+        ...record,
+        decision: "marker-pass",
+        fingerprint: fp,
+        source: "commit",
+        affirmation: override.affirmation,
+        ...override.fields,
+        marker_used: true
+      });
+      return void 0;
+    }
     if (outcome.secretTrip) {
       const id = tripIdOf(fp);
       const channel = tripChannel(config, input.permission_mode, "commit");
@@ -5928,9 +5942,6 @@ function checkMarker(marker, context) {
   }
   if (!context.legacy) return { status: "unverified", why: "no-quote" };
   return marker.short ? { status: "short" } : { status: "legacy" };
-}
-function markerAccepted(check) {
-  return check?.status === "verified" || check?.status === "legacy";
 }
 
 // src/hooks/handlers/pre-tool-use.ts
@@ -6130,7 +6141,6 @@ async function handlePreToolUse(input, deps) {
     store.append({ ...base, decision: "marker-short", fingerprint: fp, ...open !== void 0 ? { trip_id: open.id } : {} });
   }
   const live = marker !== void 0 && check !== void 0 && check.status !== "short";
-  const accepted = live && markerAccepted(check);
   const quoteShown = marker?.quote === void 0 ? {} : { quote: redactAndClamp(marker.quote, MAX_REASON_CHARS) };
   if (open !== void 0) {
     const affirmation = (live ? marker.reason : void 0) ?? open.affirmation;
@@ -6219,46 +6229,52 @@ async function handlePreToolUse(input, deps) {
     });
     return tripOutput(channel, text);
   }
-  if (live) {
-    const userOwned = verdict.kind === "escalate" && !agentMayAffirm(config, "pattern");
-    if (userOwned) {
-      store.append({
-        ...base,
-        decision: "marker-unmatched",
-        fingerprint: fp,
-        ...marker.reason !== void 0 ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {},
-        ...checked
-      });
-    } else if (accepted) {
-      store.append({
-        ...base,
-        decision: "marker-pass",
-        fingerprint: fp,
-        affirmation: redactAndClamp(marker.reason ?? "", MAX_REASON_CHARS),
-        ...checked,
-        ...input.tool_use_id !== void 0 ? { tool_use_id: input.tool_use_id } : {}
-      });
-      if (input.tool_use_id !== void 0) {
-        store.rememberReissue(sessionId, { tool_use_id: input.tool_use_id, ts: now, tool_name: toolName });
-      }
-      return void 0;
-    } else if (check.status === "unverified") {
-      const channel = tripChannel(config, input.permission_mode, "model");
-      const text = markerUnverifiedText({ tool: toolName, why: check.why, ...quoteShown });
-      store.append({
-        ...base,
-        decision: "marker-unverified",
-        fingerprint: fp,
-        channel,
-        ...marker.reason !== void 0 ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {},
-        ...checked,
-        emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
-        ...input.tool_use_id !== void 0 ? { tool_use_id: input.tool_use_id } : {}
-      });
-      return tripOutput(channel, text);
-    }
+  const userOwned = verdict.kind === "escalate" && !agentMayAffirm(config, "pattern");
+  if (live && (userOwned || check.status === "legacy")) {
+    store.append({
+      ...base,
+      decision: "marker-unmatched",
+      fingerprint: fp,
+      ...marker.reason !== void 0 ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {},
+      ...checked
+    });
+  } else if (live && check.status === "unverified") {
+    const channel = tripChannel(config, input.permission_mode, "model");
+    const text = markerUnverifiedText({ tool: toolName, why: check.why, ...quoteShown });
+    store.append({
+      ...base,
+      decision: "marker-unverified",
+      fingerprint: fp,
+      channel,
+      ...marker.reason !== void 0 ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {},
+      ...checked,
+      emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
+      ...input.tool_use_id !== void 0 ? { tool_use_id: input.tool_use_id } : {}
+    });
+    return tripOutput(channel, text);
   }
+  const override = live && !userOwned && check.status === "verified" ? { affirmation: redactAndClamp(marker.reason ?? "", MAX_REASON_CHARS), fields: checked } : void 0;
+  const unused = override === void 0 ? {} : { ...override.fields, marker_used: false };
+  const passOnMarker = (record) => {
+    store.append({
+      ...base,
+      ...record,
+      decision: "marker-pass",
+      fingerprint: fp,
+      affirmation: override.affirmation,
+      ...override.fields,
+      marker_used: true,
+      ...input.tool_use_id !== void 0 ? { tool_use_id: input.tool_use_id } : {}
+    });
+    if (input.tool_use_id !== void 0) {
+      store.rememberReissue(sessionId, { tool_use_id: input.tool_use_id, ts: now, tool_name: toolName });
+    }
+    return void 0;
+  };
   if (verdict.kind === "escalate") {
+    if (override !== void 0) {
+      return passOnMarker({ source: "pattern", reasons: [verdict.reason] });
+    }
     const id = tripIdOf(fp);
     const channel = tripChannel(config, input.permission_mode, "pattern");
     const text = patternTripText({
@@ -6293,9 +6309,12 @@ async function handlePreToolUse(input, deps) {
     return tripOutput(channel, text);
   }
   if (toolName === "Bash" && config.lint !== "off" && isGitCommit(typeof action.command === "string" ? action.command : void 0)) {
-    return handleCommit(input, deps, action.command, base, fp, now);
+    return handleCommit(input, deps, action.command, base, fp, now, override);
   }
-  if (deps.model === null) return void 0;
+  if (deps.model === null) {
+    if (override !== void 0) store.append({ ...base, decision: "marker-unused", fingerprint: fp, affirmation: override.affirmation, ...unused });
+    return void 0;
+  }
   const session = store.readSession(sessionId);
   const subagent = input.agent_type;
   const task = subagent === void 0 ? void 0 : store.takeSubagentTask(sessionId, subagent, now);
@@ -6391,6 +6410,7 @@ async function handlePreToolUse(input, deps) {
     const firm = [...outcome.firm];
     const prompts = userRequest === void 0 ? 0 : 1 + userRequest.previous.length - standing.length;
     if (outcome.outcome === "trip") {
+      if (override !== void 0) return passOnMarker({ ...record, source: "model", firm });
       const id = tripIdOf(fp);
       const channel = tripChannel(config, input.permission_mode, "model");
       const text = modelTripText({
@@ -6455,6 +6475,7 @@ async function handlePreToolUse(input, deps) {
       store.noteEmitted(sessionId, fp, now);
       store.append({
         ...record,
+        ...unused,
         decision: "note",
         channel: "note",
         firm,
@@ -6465,13 +6486,14 @@ async function handlePreToolUse(input, deps) {
     const suppressed = outcome.suppressed ?? "allow";
     store.append({
       ...record,
+      ...unused,
       decision: suppressed === "allow" ? "allow" : `silent-${suppressed}`,
       suppressed,
       ...firm.length > 0 ? { firm } : {}
     });
     const command = typeof action.command === "string" ? action.command : void 0;
     if (toolName === "Bash" && config.lint !== "off" && mentionsGitCommit(command)) {
-      return handleCommit(input, deps, command, base, fp, now);
+      return handleCommit(input, deps, command, base, fp, now, override);
     }
     return void 0;
   } catch (error) {
@@ -6493,6 +6515,7 @@ async function handlePreToolUse(input, deps) {
     }
     store.append({
       ...base,
+      ...unused,
       decision: "error",
       fingerprint: fp,
       error: error instanceof Error ? `${error.name}: ${error.message}` : String(error),
@@ -7943,7 +7966,7 @@ function statusReport(config, store, now = Date.now(), daemon) {
     `  tripwires: ${count("trip")} opened, ${count("trip-repeat")} repeats, ${count("reissue")} re-issued (${count(
       "reissue-ran"
     )} ran, ${count("reissue-failed")} failed)`,
-    `  markers: ${count("affirm")} sidecar affirmations, ${count("marker-pass")} passed on a verified quote, ${count(
+    `  markers: ${count("affirm")} sidecar affirmations, ${count("marker-pass")} answered a trip on a verified quote, ${count(
       "marker-unverified"
     ) + count("affirm-unverified")} refused (quote not the user's), ${count("marker-unmatched")} on user-owned code-rule calls, ${count(
       "marker-short"
@@ -8024,6 +8047,7 @@ function whyReport(store, limit = 3, filter = "all") {
     if (record.marker_check === "verified" && record.marker_match !== void 0) {
       const ago = record.marker_match.age === 0 ? "the latest user message" : `the user message ${record.marker_match.age} back`;
       lines.push(`  quote verified in ${ago}: ${record.marker_match.message}`);
+      if (record.marker_used === false) lines.push("  marker not needed: the judgment passed the call on its own");
     } else if (record.marker_check === "unverified") {
       lines.push(`  quote refused: ${MARKER_REFUSAL_TEXT[record.marker_refusal ?? "not-found"]}`);
     } else if (record.marker_check === "legacy") {
@@ -8233,7 +8257,8 @@ function calibrateReport(config, store) {
     "",
     "3. Marker hygiene",
     `  markers refused because the quote was not the user's: ${decisions("marker-unverified").length + decisions("affirm-unverified").length}`,
-    `  markers that passed an untripped call on a verified quote: ${decisions("marker-pass").length}`,
+    `  tripped judgments answered on the spot by a verified quote: ${decisions("marker-pass").length}`,
+    `  verified markers on calls the judgment passed anyway (unused): ${log.filter((r) => r.marker_used === false).length}`,
     `  markers on user-owned code-rule calls (never honoured): ${decisions("marker-unmatched").length}`,
     `  markers too short to count as a reason (legacy_markers): ${decisions("marker-short").length}`,
     `  sidecar affirmations naming an unknown trip: ${decisions("affirm-unmatched").length}`,
