@@ -378,17 +378,6 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     return tripOutput(channel, text);
   }
 
-  // A `git commit` with nothing open against it: the commit-time lint. It runs
-  // here, after the open-trip machinery, so an affirmed commit re-runs through
-  // the same reissue path as any Bash trip.
-  if (
-    toolName === "Bash" &&
-    config.lint !== "off" &&
-    isGitCommit(typeof action.command === "string" ? action.command : undefined)
-  ) {
-    return handleCommit(input, deps, action.command as string, base, fp, now);
-  }
-
   // Row 5: a marker on a call that was never tripped. It has already been
   // stripped out of `action`; all that is left is to say so in the log.
   if (marker?.reason !== undefined) {
@@ -436,6 +425,19 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
     });
     return tripOutput(channel, text);
+  }
+
+  // A lone `git commit` with nothing open against it: the commit-time lint in
+  // place of the gate. It runs after the open-trip machinery, so an affirmed
+  // commit re-runs through the same reissue path as any Bash trip, and after
+  // the code rules, so no prefix can carry a command past a pattern trip. A
+  // compound command that contains a commit is not lone and is judged below.
+  if (
+    toolName === "Bash" &&
+    config.lint !== "off" &&
+    isGitCommit(typeof action.command === "string" ? action.command : undefined)
+  ) {
+    return handleCommit(input, deps, action.command as string, base, fp, now);
   }
 
   // Row 6: from here on a judgment is needed. No model means no opinion.

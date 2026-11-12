@@ -8,6 +8,7 @@
 
 import { commitOutcome, commitQuestions, commitState, addedLinesOf } from "../commit-core.js";
 import { looksLikeSecretLiteral } from "../lint-prefilter.js";
+import { scanBash } from "../prefilter.js";
 import { redactAndClamp } from "../redact.js";
 import { modelCost, requestText, MAX_PROMPT_CHARS, type DecisionRecord } from "../store.js";
 import { fingerprint, tripIdOf, MAX_REASON_CHARS, type Trip } from "../tripwire.js";
@@ -21,11 +22,112 @@ import { noteOutput, tripChannel, tripOutput } from "./pre-tool-use.js";
 /** Longest staged diff sent to the model (head + tail at hunk boundaries done by the reader). */
 const MAX_COMMIT_DIFF = 24_000;
 
-/** Is this Bash command a real `git commit` (not `--dry-run`)? */
+/** Stands in for an inert commit message while the command line is scanned. */
+const MESSAGE_PLACEHOLDER = "MSG";
+const QUOTED_HEREDOC_OPEN = /"\$\(cat <<(['"])([A-Za-z0-9_]+)\1\n/g;
+
+/** Does `text` end outside every quote and escape, the way a shell reads it? */
+function unquotedAtEnd(text: string): boolean {
+  let quote: "'" | '"' | undefined;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote === "'") {
+      if (c === "'") quote = undefined;
+    } else if (c === "\\") {
+      if (i === text.length - 1) return false;
+      i += 1;
+    } else if (quote === '"') {
+      if (c === '"') quote = undefined;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    }
+  }
+  return quote === undefined;
+}
+
+/**
+ * Parentheses in a here-document body that no shell can read as the end of
+ * the `$( … )` around it. Older shells (bash 3.2) find that end by counting
+ * parentheses, quote-aware, even inside the body; balanced parentheses with no
+ * quote characters beside them cannot close it early.
+ */
+function parensAreInert(body: string): boolean {
+  if (!body.includes(")")) return true;
+  if (/['"`\\]/.test(body)) return false;
+  let depth = 0;
+  for (const c of body) {
+    if (c === "(") depth += 1;
+    else if (c === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+
+/**
+ * Replace each `"$(cat <<'EOF' … EOF)"` message with a plain word.
+ *
+ * That is the shape Claude Code writes a multi-line commit message in. With a
+ * quoted delimiter the body is literal text — no expansion, no substitution —
+ * so it cannot run anything, and the body ends at the first line that is the
+ * delimiter exactly, as it does in the shell. Anything that does not have that
+ * shape all the way to the closing `)"` returns undefined: the command is then
+ * not a lone commit and goes through the gate.
+ */
+function withInertMessages(command: string): string | undefined {
+  let out = "";
+  let from = 0;
+  QUOTED_HEREDOC_OPEN.lastIndex = 0;
+  for (let m = QUOTED_HEREDOC_OPEN.exec(command); m !== null; m = QUOTED_HEREDOC_OPEN.exec(command)) {
+    // Inside a quote the opener is not an opener at all: `'"$(cat <<'EOF'` …
+    // closes and reopens single quotes, and what looks like a body can be
+    // unquoted shell.
+    if (!unquotedAtEnd(out + command.slice(from, m.index))) return undefined;
+    const delimiter = m[2] as string;
+    const bodyStart = m.index + m[0].length;
+    let lineStart = bodyStart;
+    let bodyEnd = -1;
+    while (lineStart <= command.length) {
+      const newline = command.indexOf("\n", lineStart);
+      const lineEnd = newline === -1 ? command.length : newline;
+      if (command.slice(lineStart, lineEnd) === delimiter) {
+        bodyEnd = lineEnd;
+        break;
+      }
+      if (newline === -1) break;
+      lineStart = newline + 1;
+    }
+    if (bodyEnd === -1) return undefined;
+    if (!parensAreInert(command.slice(bodyStart, bodyEnd))) return undefined;
+    const close = /^[ \t\n]*\)"/.exec(command.slice(bodyEnd));
+    if (close === null) return undefined;
+    out += `${command.slice(from, m.index)}"${MESSAGE_PLACEHOLDER}"`;
+    from = bodyEnd + close[0].length;
+    QUOTED_HEREDOC_OPEN.lastIndex = from;
+  }
+  return out + command.slice(from);
+}
+
+/**
+ * Is this Bash command a lone, real `git commit` (not `--dry-run`)?
+ *
+ * Only then does the call take the commit-time lint instead of the gate, so
+ * the bar is the whole command line: one simple command whose first word is
+ * `git` and whose second is `commit` — no `git -c …` or other option in
+ * between, no assignment or path in front, no `&&` / `||` / `;` / `&` / pipe /
+ * newline, no substitution, expansion, subshell, redirect or here-document.
+ * A compound command that merely contains a commit is judged like any other
+ * call, and its pattern trips apply in either case.
+ */
 export function isGitCommit(command: string | undefined): boolean {
   if (typeof command !== "string") return false;
-  if (!/\bgit\b[^\n|;&]*\bcommit\b/.test(command)) return false;
-  if (/--dry-run\b/.test(command)) return false;
+  const plain = withInertMessages(command);
+  if (plain === undefined) return false;
+  const scan = scanBash(plain);
+  const { redirect, substitution, expansion, grouping, heredoc, unbalanced } = scan.features;
+  if (redirect || substitution || expansion || grouping || heredoc || unbalanced) return false;
+  if (scan.segments.length !== 1) return false;
+  const tokens = scan.segments[0] as string[];
+  if (tokens[0] !== "git" || tokens[1] !== "commit") return false;
+  if (tokens.some((token) => /^--dry-run(=|$)/.test(token))) return false;
   return true;
 }
 

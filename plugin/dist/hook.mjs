@@ -5381,10 +5381,76 @@ function addedLinesOf(diff) {
 
 // src/hooks/handlers/commit.ts
 var MAX_COMMIT_DIFF = 24e3;
+var MESSAGE_PLACEHOLDER = "MSG";
+var QUOTED_HEREDOC_OPEN = /"\$\(cat <<(['"])([A-Za-z0-9_]+)\1\n/g;
+function unquotedAtEnd(text) {
+  let quote;
+  for (let i = 0; i < text.length; i += 1) {
+    const c = text[i];
+    if (quote === "'") {
+      if (c === "'") quote = void 0;
+    } else if (c === "\\") {
+      if (i === text.length - 1) return false;
+      i += 1;
+    } else if (quote === '"') {
+      if (c === '"') quote = void 0;
+    } else if (c === "'" || c === '"') {
+      quote = c;
+    }
+  }
+  return quote === void 0;
+}
+function parensAreInert(body) {
+  if (!body.includes(")")) return true;
+  if (/['"`\\]/.test(body)) return false;
+  let depth = 0;
+  for (const c of body) {
+    if (c === "(") depth += 1;
+    else if (c === ")" && --depth < 0) return false;
+  }
+  return depth === 0;
+}
+function withInertMessages(command) {
+  let out = "";
+  let from = 0;
+  QUOTED_HEREDOC_OPEN.lastIndex = 0;
+  for (let m = QUOTED_HEREDOC_OPEN.exec(command); m !== null; m = QUOTED_HEREDOC_OPEN.exec(command)) {
+    if (!unquotedAtEnd(out + command.slice(from, m.index))) return void 0;
+    const delimiter = m[2];
+    const bodyStart = m.index + m[0].length;
+    let lineStart = bodyStart;
+    let bodyEnd = -1;
+    while (lineStart <= command.length) {
+      const newline = command.indexOf("\n", lineStart);
+      const lineEnd = newline === -1 ? command.length : newline;
+      if (command.slice(lineStart, lineEnd) === delimiter) {
+        bodyEnd = lineEnd;
+        break;
+      }
+      if (newline === -1) break;
+      lineStart = newline + 1;
+    }
+    if (bodyEnd === -1) return void 0;
+    if (!parensAreInert(command.slice(bodyStart, bodyEnd))) return void 0;
+    const close = /^[ \t\n]*\)"/.exec(command.slice(bodyEnd));
+    if (close === null) return void 0;
+    out += `${command.slice(from, m.index)}"${MESSAGE_PLACEHOLDER}"`;
+    from = bodyEnd + close[0].length;
+    QUOTED_HEREDOC_OPEN.lastIndex = from;
+  }
+  return out + command.slice(from);
+}
 function isGitCommit(command) {
   if (typeof command !== "string") return false;
-  if (!/\bgit\b[^\n|;&]*\bcommit\b/.test(command)) return false;
-  if (/--dry-run\b/.test(command)) return false;
+  const plain = withInertMessages(command);
+  if (plain === void 0) return false;
+  const scan = scanBash(plain);
+  const { redirect, substitution, expansion, grouping, heredoc, unbalanced } = scan.features;
+  if (redirect || substitution || expansion || grouping || heredoc || unbalanced) return false;
+  if (scan.segments.length !== 1) return false;
+  const tokens = scan.segments[0];
+  if (tokens[0] !== "git" || tokens[1] !== "commit") return false;
+  if (tokens.some((token) => /^--dry-run(=|$)/.test(token))) return false;
   return true;
 }
 function commitMessage(command) {
@@ -5696,9 +5762,6 @@ async function handlePreToolUse(input, deps) {
     });
     return tripOutput(channel, text);
   }
-  if (toolName === "Bash" && config.lint !== "off" && isGitCommit(typeof action.command === "string" ? action.command : void 0)) {
-    return handleCommit(input, deps, action.command, base, fp, now);
-  }
   if (marker?.reason !== void 0) {
     store.append({
       ...base,
@@ -5740,6 +5803,9 @@ async function handlePreToolUse(input, deps) {
       ...input.tool_use_id !== void 0 ? { tool_use_id: input.tool_use_id } : {}
     });
     return tripOutput(channel, text);
+  }
+  if (toolName === "Bash" && config.lint !== "off" && isGitCommit(typeof action.command === "string" ? action.command : void 0)) {
+    return handleCommit(input, deps, action.command, base, fp, now);
   }
   if (deps.model === null) return void 0;
   const session = store.readSession(sessionId);
