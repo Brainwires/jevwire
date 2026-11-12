@@ -772,8 +772,193 @@ function shellString(tokens: string[]): string | undefined {
   return args.slice(flag + 1).find((arg) => !arg.startsWith("-"));
 }
 
-/** How many levels of `sh -c "sh -c …"` are opened before giving up. */
-const MAX_SHELL_NESTING = 3;
+/**
+ * How many levels of nested code the rules open: `sh -c "sh -c …"`, `$( $( … ) )`
+ * and every mix of them. Past this the command trips `nesting-too-deep` rather
+ * than being let through unread; the limit bounds the work, not the coverage.
+ */
+const MAX_NESTING = 8;
+const NESTING_TOO_DEEP = {
+  name: "nesting-too-deep",
+  reason: "code nested more deeply than the code rules follow (substitutions or shell strings)",
+};
+
+/** Index of the backtick closing one opened just before `start`, or the end. */
+function closingBacktick(text: string, start: number): number {
+  for (let i = start; i < text.length; i += 1) {
+    if (text[i] === "\\") i += 1;
+    else if (text[i] === "`") return i;
+  }
+  return text.length;
+}
+
+/** Index of the `"` closing a double-quoted string opened just before `start`. */
+function closingDoubleQuote(text: string, start: number): number {
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") i += 2;
+    else if (c === '"') return i;
+    else if (c === "$" && text[i + 1] === "(") i = closingParen(text, i + 2) + 1;
+    else if (c === "`") i = closingBacktick(text, i + 1) + 1;
+    else i += 1;
+  }
+  return text.length;
+}
+
+/**
+ * Index of the `)` closing a substitution whose body starts at `start`, or the
+ * end of the text when there is none — an unclosed body is read to the end,
+ * which can only add to what is checked.
+ */
+function closingParen(text: string, start: number): number {
+  let depth = 1;
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      const close = text.indexOf("'", i + 1);
+      if (close === -1) return text.length;
+      i = close + 1;
+      continue;
+    }
+    if (c === '"') {
+      i = closingDoubleQuote(text, i + 1) + 1;
+      continue;
+    }
+    if (c === "`") {
+      i = closingBacktick(text, i + 1) + 1;
+      continue;
+    }
+    if (c === "(") depth += 1;
+    else if (c === ")" && --depth === 0) return i;
+    i += 1;
+  }
+  return text.length;
+}
+
+/**
+ * The code inside every substitution the shell would run while expanding
+ * `text`: `$( … )`, backticks, `<( … )`, `>( … )`, and `$(( … ))` (whose
+ * body is read as code too, so a substitution inside it is found on the next
+ * level). Only the outermost ones are returned; the caller recurses.
+ *
+ * Single-quoted text is literal and skipped. Inside double quotes `$( … )`
+ * and backticks still run, process substitution does not. `heredoc` reads
+ * `text` as the body of an unquoted here-document, where quotes are literal
+ * and only `$`, backticks and backslashes mean anything.
+ */
+export function substitutionBodies(text: string, heredoc = false): string[] {
+  const bodies: string[] = [];
+  let inDouble = false;
+  /** Here-documents opened on the current line, bodies still to come. */
+  let pending: { delimiter: string; quoted: boolean; dashed: boolean }[] = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (!heredoc && !inDouble && c === "<" && text[i + 1] === "<" && text[i + 2] !== "<") {
+      const open = /^<<(-?)[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|\\?([A-Za-z0-9_.-]+))/.exec(text.slice(i));
+      if (open !== null) {
+        const delimiter = open[2] ?? open[3] ?? open[4] ?? "";
+        const quoted = open[2] !== undefined || open[3] !== undefined || open[0].includes("\\");
+        pending.push({ delimiter, quoted, dashed: open[1] === "-" });
+        i += open[0].length;
+        continue;
+      }
+    }
+    if (!heredoc && !inDouble && c === "\n" && pending.length > 0) {
+      // The bodies follow this line: data, unless the delimiter was unquoted,
+      // in which case the shell expands them and their substitutions run.
+      i += 1;
+      for (const doc of pending) {
+        const lines: string[] = [];
+        while (i < text.length) {
+          const newline = text.indexOf("\n", i);
+          const line = newline === -1 ? text.slice(i) : text.slice(i, newline);
+          i = newline === -1 ? text.length : newline + 1;
+          if ((doc.dashed ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
+          lines.push(line);
+        }
+        if (!doc.quoted) bodies.push(...substitutionBodies(lines.join("\n"), true));
+      }
+      pending = [];
+      continue;
+    }
+    if (!heredoc && !inDouble && c === "'") {
+      const close = text.indexOf("'", i + 1);
+      i = close === -1 ? text.length : close + 1;
+      continue;
+    }
+    if (!heredoc && c === '"') {
+      inDouble = !inDouble;
+      i += 1;
+      continue;
+    }
+    if (c === "`") {
+      const end = closingBacktick(text, i + 1);
+      bodies.push(text.slice(i + 1, end).replace(/\\([\\`$])/g, "$1"));
+      i = end + 1;
+      continue;
+    }
+    const opensProcess = !heredoc && !inDouble && (c === "<" || c === ">");
+    if ((c === "$" || opensProcess) && text[i + 1] === "(") {
+      const end = closingParen(text, i + 2);
+      bodies.push(text.slice(i + 2, end));
+      i = end + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return bodies;
+}
+
+const isFlag = (arg: string): boolean => arg.startsWith("-") || arg.startsWith("+");
+
+/** A shell not given a `-c` string: it runs a script file, or stdin. */
+function shellWithoutString(form: string[]): boolean {
+  return SHELLS.has(commandOf(form)) && !argsOf(form).some((arg) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(arg));
+}
+
+/** Does a shell with these arguments read its script from stdin? */
+function shellReadsStdin(form: string[]): boolean {
+  if (!shellWithoutString(form)) return false;
+  const args = argsOf(form);
+  return args.every(isFlag) || args.includes("-s");
+}
+
+/**
+ * Code this command runs that its own segments do not show: the bodies of its
+ * substitutions (in the command line and in unquoted here-documents), and a
+ * script handed to a shell on stdin — a here-document, a here-string, or the
+ * output of an `echo`/`printf` before it. The scanner does not tell `|` from
+ * `;`, so "before it" means any earlier segment, which can only add a check.
+ */
+function hiddenCode(command: string, scan: BashScan): string[] {
+  const code = substitutionBodies(command);
+  const hereStrings = scan.features.heredoc && scan.heredocs.length === 0;
+  const echoed: string[] = [];
+  for (const [index, segment] of scan.segments.entries()) {
+    for (const form of effectiveForms(segment, [])) {
+      // A here-string's word is among the operands; with one, a shell given
+      // no `-c` is read as running it.
+      if (hereStrings && shellWithoutString(form)) code.push(...argsOf(form).filter((arg) => !isFlag(arg)));
+      if (!shellReadsStdin(form)) continue;
+      for (const heredoc of scan.heredocs) if (heredoc.segment === index) code.push(heredoc.body);
+      code.push(...echoed);
+    }
+    const name = commandOf(segment);
+    if (name === "echo" || name === "printf") echoed.push(argsOf(segment).filter((arg) => !arg.startsWith("-")).join(" "));
+  }
+  return code.filter((text) => text.trim() !== "");
+}
 
 /**
  * The first hard pattern this command matches, looking through wrappers and
@@ -781,7 +966,8 @@ const MAX_SHELL_NESTING = 3;
  *
  * Every segment is tried as written and in each unwrapped form, against the
  * raw patterns and the token patterns. A segment that is `sh -c <string>` or
- * `eval …` has its string scanned the same way, to `MAX_SHELL_NESTING` deep:
+ * `eval …` has its string scanned the same way, as is the code in every
+ * substitution and any script fed to a shell on stdin, to `MAX_NESTING` deep:
  * `sudo bash -c 'rm -rf ~'` is `rm -rf ~` and has to trip like it.
  */
 function hardPatternHit(command: string, scan: BashScan, depth = 0): { name: string; reason: string } | undefined {
@@ -801,16 +987,20 @@ function hardPatternHit(command: string, scan: BashScan, depth = 0): { name: str
         if (hard.matches(form, flat)) return { name: hard.name, reason: hard.reason };
       }
       if (findWideDelete(form) || (hereWide && rmHere(form))) return { name: "rm-rf-wide", reason: RM_RF_WIDE_REASON };
-      if (depth < MAX_SHELL_NESTING) {
-        const inner = shellString(form);
-        if (inner !== undefined) {
-          const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
-          if (hit !== undefined) return hit;
-        }
+      const inner = shellString(form);
+      if (inner !== undefined) {
+        if (depth >= MAX_NESTING) return NESTING_TOO_DEEP;
+        const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
+        if (hit !== undefined) return hit;
       }
     }
     const name = commandOf(segment);
     if (name === "echo" || name === "printf") fed.push(...argsOf(segment).filter((arg) => isWideTarget(arg)));
+  }
+  for (const inner of hiddenCode(command, scan)) {
+    if (depth >= MAX_NESTING) return NESTING_TOO_DEEP;
+    const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
+    if (hit !== undefined) return hit;
   }
   return undefined;
 }
@@ -1477,7 +1667,7 @@ function selfDisableBash(command: string, scan: BashScan, options: FilePrefilter
       const cli = claudeCliDisables(form);
       if (cli !== undefined) return cli;
 
-      if (depth < MAX_SHELL_NESTING) {
+      if (depth < MAX_NESTING) {
         const inner = shellString(form);
         if (inner !== undefined) {
           const hit = selfDisableBash(inner, scanBash(inner), options, depth + 1);
@@ -1497,6 +1687,13 @@ function selfDisableBash(command: string, scan: BashScan, options: FilePrefilter
     if (redirect.special || redirect.target === "") continue;
     const hit = selfDisableTarget(redirect.target, command, options);
     if (hit !== undefined) return hit;
+  }
+  // Past the limit, `hardPatternHit` has already tripped `nesting-too-deep`.
+  if (depth < MAX_NESTING) {
+    for (const inner of hiddenCode(command, scan)) {
+      const hit = selfDisableBash(inner, scanBash(inner), options, depth + 1);
+      if (hit !== undefined) return hit;
+    }
   }
   return undefined;
 }

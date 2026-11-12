@@ -476,16 +476,21 @@ describe("prefilterBash", () => {
       });
     }
 
-    it("stops following shell strings at the nesting limit", () => {
-      // Three shells deep is followed; four is not. The limit exists so a
-      // pathological command cannot make the prefilter do unbounded work.
+    it("trips at the nesting limit instead of letting the rest through unread", () => {
+      // Eight shells deep is followed; past that the command trips on its
+      // depth. The limit bounds the work, and nesting past it cannot hide a
+      // command from the rules.
       const wrap = (levels: number): string => {
         let command = "rm -rf /";
         for (let level = 0; level < levels; level += 1) command = `bash -c ${JSON.stringify(command)}`;
         return command;
       };
-      expect(prefilterBash(wrap(3)).kind).toBe("escalate");
-      expect(prefilterBash(wrap(4)).kind).toBe("judge");
+      const name = (verdict: ReturnType<typeof prefilterBash>): string =>
+        verdict.kind === "escalate" ? verdict.pattern : verdict.kind;
+      expect(name(prefilterBash(wrap(4)))).toBe("rm-rf-wide");
+      expect(name(prefilterBash(wrap(8)))).toBe("rm-rf-wide");
+      expect(name(prefilterBash(wrap(9)))).toBe("nesting-too-deep");
+      expect(name(prefilterBash(wrap(9).replace("rm -rf /", "ls")))).toBe("nesting-too-deep");
     });
 
     it("does not read a wrapper's lookup form as running anything", () => {
@@ -496,6 +501,65 @@ describe("prefilterBash", () => {
       expect(prefilterBash("xargs rm -rf").kind).toBe("judge");
       expect(prefilterBash("echo build | xargs rm -rf").kind).toBe("judge");
       expect(prefilterBash("cat list | xargs rm -rf").kind).toBe("judge");
+    });
+  });
+
+  describe("hard patterns see into substitutions and code fed to a shell", () => {
+    const hidden: [string, string][] = [
+      ['echo "$(git reset --hard HEAD~1)"', "git-reset-hard"],
+      ["echo $(git reset --hard HEAD~1)", "git-reset-hard"],
+      ['git commit -m "$(git reset --hard HEAD~1)"', "git-reset-hard"],
+      ["echo `git reset --hard`", "git-reset-hard"],
+      ['echo "`rm -rf ~`"', "rm-rf-wide"],
+      ["cat <(rm -rf ~)", "rm-rf-wide"],
+      ["tee >(rm -rf /) < /dev/null", "rm-rf-wide"],
+      ["echo $(( $(rm -rf ~) + 1 ))", "rm-rf-wide"],
+      ['echo ${x:-$(rm -rf ~)}', "rm-rf-wide"],
+      ['echo "$(echo "$(git reset --hard)")"', "git-reset-hard"],
+      ["echo $(echo $(echo $(echo $(git push --force origin main))))", "git-force-push-main"],
+      ["x=$(sudo rm -rf /home/someone)", "rm-rf-wide"],
+      ['ls "$(bash -c \'rm -rf ~\')"', "rm-rf-wide"],
+      ["bash -c 'echo $(rm -rf ~)'", "rm-rf-wide"],
+      ["cat <<EOF\n$(rm -rf ~)\nEOF", "rm-rf-wide"],
+      ["cat <<EOF\n`git reset --hard`\nEOF", "git-reset-hard"],
+      ["bash <<'EOF'\ngit reset --hard\nEOF", "git-reset-hard"],
+      ["sh <<EOF\nrm -rf ~\nEOF", "rm-rf-wide"],
+      ["bash <<< 'git reset --hard'", "git-reset-hard"],
+      ["echo 'git reset --hard' | bash", "git-reset-hard"],
+      ["printf 'rm -rf ~' | sh", "rm-rf-wide"],
+    ];
+    for (const [command, pattern] of hidden) {
+      it(`escalates ${JSON.stringify(command)} as ${pattern}`, () => {
+        const verdict = prefilterBash(command);
+        expect(verdict.kind).toBe("escalate");
+        if (verdict.kind === "escalate") expect(verdict.pattern).toBe(pattern);
+      });
+    }
+
+    it("leaves literal text alone: single quotes and quoted here-documents are not run", () => {
+      for (const command of [
+        "echo '$(git reset --hard)'",
+        "cat <<'EOF'\n$(rm -rf ~)\nEOF",
+        "grep -n 'echo `id`' README.md",
+        "echo \\$(git reset --hard)",
+      ]) {
+        expect(prefilterBash(command).kind, command).not.toBe("escalate");
+      }
+    });
+
+    it("trips a substitution nested past the depth the rules follow", () => {
+      let command = "rm -rf ~";
+      for (let level = 0; level < 12; level += 1) command = `echo $(${command})`;
+      const verdict = prefilterBash(command);
+      expect(verdict.kind === "escalate" ? verdict.pattern : verdict.kind).toBe("nesting-too-deep");
+    });
+
+    it("trips the self-disable rule inside a substitution", () => {
+      const options = { cwd: "/home/dev/project", strict: false, dataDir: "/home/dev/.claude/plugins/data/jev" };
+      for (const command of ['echo "$(node dist/hook.mjs disable)"', "x=`claude plugin disable jevwire`", "echo $(claude plugin disable jevwire)"]) {
+        const verdict = prefilterBash(command, options);
+        expect(verdict.kind === "escalate" ? verdict.pattern : verdict.kind, command).toBe("jev-self-disable");
+      }
     });
   });
 

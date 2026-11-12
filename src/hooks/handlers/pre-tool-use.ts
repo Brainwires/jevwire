@@ -35,7 +35,7 @@ import { gateOutcome, bands, NOTE_DEDUPE_TTL_MS } from "../advisory.js";
 import { runGateAction, type GateAction, type GateContext, type GateRequest } from "../../tools/gate-action-core.js";
 import { FILE_TOOLS, prefilter, SPAWN_TOOLS, structuredAction } from "../prefilter.js";
 import { handleLint } from "./lint.js";
-import { handleCommit, isGitCommit } from "./commit.js";
+import { handleCommit, isGitCommit, mentionsGitCommit } from "./commit.js";
 import { compactJson, redact, redactAndClamp } from "../redact.js";
 import { modelCost, MAX_PROMPT_CHARS } from "../store.js";
 import type { DecisionRecord } from "../store.js";
@@ -638,6 +638,13 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       suppressed,
       ...(firm.length > 0 ? { firm } : {}),
     });
+    // A compound command with a commit in it (`git add -A && git commit -m x`)
+    // went through the code rules and the gate like any other call. Once the
+    // gate has nothing to say, the commit in it still gets the commit lint.
+    const command = typeof action.command === "string" ? action.command : undefined;
+    if (toolName === "Bash" && config.lint !== "off" && mentionsGitCommit(command)) {
+      return handleCommit(input, deps, command as string, base, fp, now);
+    }
     return undefined;
   } catch (error) {
     // Fail open, but not in silence: the call runs, and the user is told —

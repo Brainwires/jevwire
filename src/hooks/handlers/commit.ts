@@ -131,6 +131,18 @@ export function isGitCommit(command: string | undefined): boolean {
   return true;
 }
 
+/**
+ * Does any part of this command look like a real `git commit`?
+ *
+ * Loose on purpose, and never a reason to skip anything: it only decides
+ * whether a compound command the gate has already let through also gets the
+ * commit-time lint (`git add -A && git commit -m x`).
+ */
+export function mentionsGitCommit(command: string | undefined): boolean {
+  if (typeof command !== "string") return false;
+  return /\bgit\b[^\n|;&]*\bcommit\b/.test(command) && !/--dry-run\b/.test(command);
+}
+
 /** The `-m "…"` or `-F` message, when the command carries one. */
 function commitMessage(command: string): string | undefined {
   const m = /-m\s+("([^"]*)"|'([^']*)'|(\S+))/.exec(command);

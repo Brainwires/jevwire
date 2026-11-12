@@ -2024,7 +2024,148 @@ function shellString(tokens) {
   if (flag2 === -1) return void 0;
   return args.slice(flag2 + 1).find((arg) => !arg.startsWith("-"));
 }
-var MAX_SHELL_NESTING = 3;
+var MAX_NESTING = 8;
+var NESTING_TOO_DEEP = {
+  name: "nesting-too-deep",
+  reason: "code nested more deeply than the code rules follow (substitutions or shell strings)"
+};
+function closingBacktick(text, start) {
+  for (let i = start; i < text.length; i += 1) {
+    if (text[i] === "\\") i += 1;
+    else if (text[i] === "`") return i;
+  }
+  return text.length;
+}
+function closingDoubleQuote(text, start) {
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") i += 2;
+    else if (c === '"') return i;
+    else if (c === "$" && text[i + 1] === "(") i = closingParen(text, i + 2) + 1;
+    else if (c === "`") i = closingBacktick(text, i + 1) + 1;
+    else i += 1;
+  }
+  return text.length;
+}
+function closingParen(text, start) {
+  let depth = 1;
+  let i = start;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (c === "'") {
+      const close = text.indexOf("'", i + 1);
+      if (close === -1) return text.length;
+      i = close + 1;
+      continue;
+    }
+    if (c === '"') {
+      i = closingDoubleQuote(text, i + 1) + 1;
+      continue;
+    }
+    if (c === "`") {
+      i = closingBacktick(text, i + 1) + 1;
+      continue;
+    }
+    if (c === "(") depth += 1;
+    else if (c === ")" && --depth === 0) return i;
+    i += 1;
+  }
+  return text.length;
+}
+function substitutionBodies(text, heredoc = false) {
+  const bodies = [];
+  let inDouble = false;
+  let pending = [];
+  let i = 0;
+  while (i < text.length) {
+    const c = text[i];
+    if (c === "\\") {
+      i += 2;
+      continue;
+    }
+    if (!heredoc && !inDouble && c === "<" && text[i + 1] === "<" && text[i + 2] !== "<") {
+      const open = /^<<(-?)[ \t]*(?:'([^'\n]*)'|"([^"\n]*)"|\\?([A-Za-z0-9_.-]+))/.exec(text.slice(i));
+      if (open !== null) {
+        const delimiter = open[2] ?? open[3] ?? open[4] ?? "";
+        const quoted = open[2] !== void 0 || open[3] !== void 0 || open[0].includes("\\");
+        pending.push({ delimiter, quoted, dashed: open[1] === "-" });
+        i += open[0].length;
+        continue;
+      }
+    }
+    if (!heredoc && !inDouble && c === "\n" && pending.length > 0) {
+      i += 1;
+      for (const doc of pending) {
+        const lines = [];
+        while (i < text.length) {
+          const newline = text.indexOf("\n", i);
+          const line = newline === -1 ? text.slice(i) : text.slice(i, newline);
+          i = newline === -1 ? text.length : newline + 1;
+          if ((doc.dashed ? line.replace(/^\t+/, "") : line) === doc.delimiter) break;
+          lines.push(line);
+        }
+        if (!doc.quoted) bodies.push(...substitutionBodies(lines.join("\n"), true));
+      }
+      pending = [];
+      continue;
+    }
+    if (!heredoc && !inDouble && c === "'") {
+      const close = text.indexOf("'", i + 1);
+      i = close === -1 ? text.length : close + 1;
+      continue;
+    }
+    if (!heredoc && c === '"') {
+      inDouble = !inDouble;
+      i += 1;
+      continue;
+    }
+    if (c === "`") {
+      const end = closingBacktick(text, i + 1);
+      bodies.push(text.slice(i + 1, end).replace(/\\([\\`$])/g, "$1"));
+      i = end + 1;
+      continue;
+    }
+    const opensProcess = !heredoc && !inDouble && (c === "<" || c === ">");
+    if ((c === "$" || opensProcess) && text[i + 1] === "(") {
+      const end = closingParen(text, i + 2);
+      bodies.push(text.slice(i + 2, end));
+      i = end + 1;
+      continue;
+    }
+    i += 1;
+  }
+  return bodies;
+}
+var isFlag = (arg) => arg.startsWith("-") || arg.startsWith("+");
+function shellWithoutString(form) {
+  return SHELLS.has(commandOf(form)) && !argsOf(form).some((arg) => /^-[a-zA-Z]*c[a-zA-Z]*$/.test(arg));
+}
+function shellReadsStdin(form) {
+  if (!shellWithoutString(form)) return false;
+  const args = argsOf(form);
+  return args.every(isFlag) || args.includes("-s");
+}
+function hiddenCode(command, scan) {
+  const code = substitutionBodies(command);
+  const hereStrings = scan.features.heredoc && scan.heredocs.length === 0;
+  const echoed = [];
+  for (const [index, segment] of scan.segments.entries()) {
+    for (const form of effectiveForms(segment, [])) {
+      if (hereStrings && shellWithoutString(form)) code.push(...argsOf(form).filter((arg) => !isFlag(arg)));
+      if (!shellReadsStdin(form)) continue;
+      for (const heredoc of scan.heredocs) if (heredoc.segment === index) code.push(heredoc.body);
+      code.push(...echoed);
+    }
+    const name = commandOf(segment);
+    if (name === "echo" || name === "printf") echoed.push(argsOf(segment).filter((arg) => !arg.startsWith("-")).join(" "));
+  }
+  return code.filter((text) => text.trim() !== "");
+}
 function hardPatternHit(command, scan, depth = 0) {
   for (const [name, reason, pattern] of RAW_HARD_PATTERNS) {
     if (pattern.test(command)) return { name, reason };
@@ -2040,16 +2181,20 @@ function hardPatternHit(command, scan, depth = 0) {
         if (hard.matches(form, flat)) return { name: hard.name, reason: hard.reason };
       }
       if (findWideDelete(form) || hereWide && rmHere(form)) return { name: "rm-rf-wide", reason: RM_RF_WIDE_REASON };
-      if (depth < MAX_SHELL_NESTING) {
-        const inner = shellString(form);
-        if (inner !== void 0) {
-          const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
-          if (hit !== void 0) return hit;
-        }
+      const inner = shellString(form);
+      if (inner !== void 0) {
+        if (depth >= MAX_NESTING) return NESTING_TOO_DEEP;
+        const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
+        if (hit !== void 0) return hit;
       }
     }
     const name = commandOf(segment);
     if (name === "echo" || name === "printf") fed.push(...argsOf(segment).filter((arg) => isWideTarget(arg)));
+  }
+  for (const inner of hiddenCode(command, scan)) {
+    if (depth >= MAX_NESTING) return NESTING_TOO_DEEP;
+    const hit = hardPatternHit(inner, scanBash(inner), depth + 1);
+    if (hit !== void 0) return hit;
   }
   return void 0;
 }
@@ -2528,7 +2673,7 @@ function selfDisableBash(command, scan, options, depth = 0) {
       }
       const cli = claudeCliDisables(form);
       if (cli !== void 0) return cli;
-      if (depth < MAX_SHELL_NESTING) {
+      if (depth < MAX_NESTING) {
         const inner = shellString(form);
         if (inner !== void 0) {
           const hit = selfDisableBash(inner, scanBash(inner), options, depth + 1);
@@ -2547,6 +2692,12 @@ function selfDisableBash(command, scan, options, depth = 0) {
     if (redirect.special || redirect.target === "") continue;
     const hit = selfDisableTarget(redirect.target, command, options);
     if (hit !== void 0) return hit;
+  }
+  if (depth < MAX_NESTING) {
+    for (const inner of hiddenCode(command, scan)) {
+      const hit = selfDisableBash(inner, scanBash(inner), options, depth + 1);
+      if (hit !== void 0) return hit;
+    }
   }
   return void 0;
 }
@@ -5453,6 +5604,10 @@ function isGitCommit(command) {
   if (tokens.some((token) => /^--dry-run(=|$)/.test(token))) return false;
   return true;
 }
+function mentionsGitCommit(command) {
+  if (typeof command !== "string") return false;
+  return /\bgit\b[^\n|;&]*\bcommit\b/.test(command) && !/--dry-run\b/.test(command);
+}
 function commitMessage(command) {
   const m = /-m\s+("([^"]*)"|'([^']*)'|(\S+))/.exec(command);
   if (m !== null) return m[2] ?? m[3] ?? m[4];
@@ -5974,6 +6129,10 @@ async function handlePreToolUse(input, deps) {
       suppressed,
       ...firm.length > 0 ? { firm } : {}
     });
+    const command = typeof action.command === "string" ? action.command : void 0;
+    if (toolName === "Bash" && config.lint !== "off" && mentionsGitCommit(command)) {
+      return handleCommit(input, deps, command, base, fp, now);
+    }
     return void 0;
   } catch (error) {
     const name = error instanceof Error ? error.name : "";

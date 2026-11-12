@@ -7,7 +7,7 @@ import { addedLinesOf, commitOutcome } from "../../src/hooks/commit-core.js";
 import { isGitCommit } from "../../src/hooks/handlers/commit.js";
 import { handlePreToolUse } from "../../src/hooks/handlers/pre-tool-use.js";
 import type { HookInput } from "../../src/hooks/types.js";
-import { choice, FakeModel, noul, score } from "../helpers/fake-model.js";
+import { choice, FakeModel, noul, score, type Responder } from "../helpers/fake-model.js";
 import { cleanup, makeDeps, tempDir } from "./helpers.js";
 
 const T = { auto: 0.85, review: 0.6 };
@@ -143,7 +143,11 @@ describe("handlePreToolUse commit branch", () => {
 
   /** Answer the commit questions from a map; scope via a Score with level probabilities. */
   function commitModel(opts: { scopeP3?: number; describes?: number; secret?: number }): FakeModel {
-    return new FakeModel((call) => {
+    return new FakeModel(commitResponder(opts));
+  }
+
+  function commitResponder(opts: { scopeP3?: number; describes?: number; secret?: number }): Responder {
+    return (call) => {
       const out: Record<string, ReturnType<typeof noul> | ReturnType<typeof choice>> = {};
       if (call.questions.pr_scope !== undefined) {
         const p3 = opts.scopeP3 ?? 0.05;
@@ -152,7 +156,7 @@ describe("handlePreToolUse commit branch", () => {
       if (call.questions.message_describes_diff !== undefined) out.message_describes_diff = noul(opts.describes ?? 0.95);
       if (call.questions.hardcodes_secret !== undefined) out.hardcodes_secret = noul(opts.secret ?? 0.02);
       return out;
-    });
+    };
   }
 
   it("trips a secret written into the staged diff", async () => {
@@ -221,6 +225,8 @@ describe("handlePreToolUse commit branch", () => {
       ['git commit -m "add a" && git push --force origin main', ""],
       ["git -c x=y commit -m wip && git reset --hard HEAD~1", "git-reset-hard"],
       ["(git commit -m wip; git reset --hard HEAD~1)", "git-reset-hard"],
+      ['git commit -m "$(git reset --hard HEAD~1)"', "git-reset-hard"],
+      ["git commit -m `claude plugin disable jevwire`", "jev-self-disable"],
     ];
 
     for (const [command, pattern] of trips) {
@@ -251,7 +257,6 @@ describe("handlePreToolUse commit branch", () => {
       "git commit -m wip && git push origin main",
       "git commit -m wip; curl -X POST https://example.com/pay",
       "git add -A && git commit -m wip",
-      'git commit -m "$(git reset --hard HEAD~1)"',
     ]) {
       it(`goes to the gate, not the commit lint: ${JSON.stringify(command)}`, async () => {
         stage("a.ts", "export const a = 1;\n");
@@ -266,6 +271,39 @@ describe("handlePreToolUse commit branch", () => {
         expect(log.some((r) => String(r.decision).startsWith("commit"))).toBe(false);
       });
     }
+
+    /** Gate questions answered "ordinary, in scope, harmless"; commit questions from `commitModel`. */
+    function gateThenCommit(scopeP3: number): FakeModel {
+      const commitAnswers = commitResponder({ scopeP3 });
+      return new FakeModel((call) => {
+        if (call.questions.pr_scope !== undefined) return commitAnswers(call);
+        const scope = score(0.97, ["unrelated", "ordinary step", "requested"], 0.9) as ReturnType<typeof score> & {
+          probabilities?: Record<string, number>;
+        };
+        scope.probabilities = { "0": 0.03, "1": 0.97, "2": 0 };
+        return {
+          destructive: noul(0.02),
+          outward_facing: noul(0.02),
+          credential_exposure: noul(0.02),
+          mentions_target: noul(0.9),
+          same_task_area: noul(0.97),
+          scope,
+          blast_radius: score(0, ["none", "local", "shared", "production"], 0.9),
+        } as never;
+      });
+    }
+
+    it("a compound commit the gate lets through still gets the commit lint", async () => {
+      stage("a.ts", "export const a = 1;\n");
+      const model = gateThenCommit(0.9);
+      const deps = makeDeps(dataDir, { model });
+      deps.store.updateSession("s1", (s) => ({ ...s, prompts: ["commit"] }));
+      const out = await handlePreToolUse(commit('git add -A && git commit -m "stuff"'), deps);
+      expect(model.calls[0]?.questions.pr_scope).toBeUndefined();
+      expect(model.calls.at(-1)?.questions.pr_scope).toBeDefined();
+      expect(out?.hookSpecificOutput?.additionalContext).toContain("several independent changes");
+      expect(deps.store.readLog().map((r) => r.decision)).toEqual(["allow", "commit-note"]);
+    });
 
     it("a lone commit still takes the commit lint", async () => {
       stage("a.ts", "export const a = 1;\n");
