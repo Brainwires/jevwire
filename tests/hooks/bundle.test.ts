@@ -39,7 +39,9 @@ describe("plugin/dist", () => {
     // the self-protection rules and the pattern-trip policy: about +17 KiB,
     // unminified by design, and again no dependency (the build prints
     // `deps: none`). The ceiling moves up once to cover that and no more.
-    expect(statSync(hook).size).toBeLessThan(330 * 1024);
+    // 0.7.2 added the transcript reader, the marker check and the standing
+    // instructions: about +18 KiB, again with no dependency.
+    expect(statSync(hook).size).toBeLessThan(350 * 1024);
   });
 
   it("contains the daemon, so the http hooks have something to talk to", () => {

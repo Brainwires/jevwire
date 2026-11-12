@@ -48,7 +48,7 @@
     "pattern_trips": {
       "type": "string",
       "title": "Who clears a code-rule trip",
-      "description": "What happens when a command matches a code rule (rm -rf of a home or root path, a force push to main, git reset --hard, mkfs, dd to a device, a recursive chmod 777, a fork bomb, or an attempt to turn this plugin off). ask: you approve or refuse it in Claude Code's permission prompt; in dontAsk or bypassPermissions it is denied. deny: always denied. advisory: the pre-0.7 behaviour, where the call is denied once to Claude and Claude may re-issue it with a `# jev:intended <why>` marker. The default is ask, because a marker is something the agent writes, and an agent reading an injected page can write one.",
+      "description": "What happens when a command matches a code rule (rm -rf of a home or root path, a force push to main, git reset --hard, mkfs, dd to a device, a recursive chmod 777, a fork bomb, or an attempt to turn this plugin off). ask: you approve or refuse it in Claude Code's permission prompt; in dontAsk or bypassPermissions it is denied. deny: always denied. advisory: the pre-0.7 behaviour, where the call is denied once to Claude and Claude may re-issue it with a `# jev:intended \"<your words>\" <why>` marker. The default is ask, because a marker is something the agent writes, and an agent reading an injected page can write one.",
       "default": "ask",
       "options": [
         "ask",
@@ -113,6 +113,20 @@
       "description": "When linting, also check each edit against the rule lines in your CLAUDE.md (up to 12). Off leaves the built-in checks only.",
       "default": true
     },
+    "legacy_markers": {
+      "type": "boolean",
+      "title": "Accept unquoted # jev:intended markers",
+      "description": "Off by default: a marker that clears a classifier tripwire has to quote one of your own messages, `# jev:intended \"<your exact words>\" <why>`, and the quote is checked against the session transcript (a quote under three words counts only as a whole message, so \"yes\" counts only when you said just \"yes\"). A quote that is not in any of your messages is refused. On restores the pre-0.7.2 behaviour, where any marker of at least 12 characters is accepted as written.",
+      "default": false
+    },
+    "standing_directives": {
+      "type": "number",
+      "title": "Standing instructions judged with the last five prompts",
+      "description": "How many earlier prompts that read as ongoing directives (keep going with X, continue, handle, take care of, finish, and its release) the scope judgment reads in addition to the last five prompts, newest first and tagged with their age, until you change topic or say the task is done. 0 turns it off.",
+      "default": 3,
+      "min": 0,
+      "max": 10
+    },
     "verify_claims": {
       "type": "boolean",
       "title": "Verify the final message's claims",
@@ -142,7 +156,9 @@
         "CLAUDE_PLUGIN_OPTION_MODEL": "${user_config.model}",
         "CLAUDE_PLUGIN_OPTION_LINT": "${user_config.lint}",
         "CLAUDE_PLUGIN_OPTION_LINT_CONVENTIONS": "${user_config.lint_conventions}",
-        "CLAUDE_PLUGIN_OPTION_VERIFY_CLAIMS": "${user_config.verify_claims}"
+        "CLAUDE_PLUGIN_OPTION_VERIFY_CLAIMS": "${user_config.verify_claims}",
+        "CLAUDE_PLUGIN_OPTION_LEGACY_MARKERS": "${user_config.legacy_markers}",
+        "CLAUDE_PLUGIN_OPTION_STANDING_DIRECTIVES": "${user_config.standing_directives}"
       }
     }
   }

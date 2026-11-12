@@ -97,6 +97,34 @@ describe("loadHookConfig", () => {
     expect(readSessionConfig(legacy, own)?.patternTrips).toBe("ask");
   });
 
+  it("reads legacy_markers, off by default: a marker has to quote the user", () => {
+    expect(loadHookConfig({}).legacyMarkers).toBe(false);
+    expect(loadHookConfig({ CLAUDE_PLUGIN_OPTION_LEGACY_MARKERS: "true" }).legacyMarkers).toBe(true);
+    expect(loadHookConfig({ JEV_LEGACY_MARKERS: "1" }).legacyMarkers).toBe(true);
+    const bad = loadHookConfig({ JEV_LEGACY_MARKERS: "sometimes" });
+    expect(bad.legacyMarkers).toBe(false);
+    expect(bad.warnings.join(" ")).toContain("legacy_markers=");
+  });
+
+  it("reads standing_directives, defaulting to 3, bounded to [0, 10], and whole", () => {
+    expect(loadHookConfig({}).standingDirectives).toBe(3);
+    expect(loadHookConfig({ CLAUDE_PLUGIN_OPTION_STANDING_DIRECTIVES: "0" }).standingDirectives).toBe(0);
+    expect(loadHookConfig({ JEV_STANDING_DIRECTIVES: "5.7" }).standingDirectives).toBe(5);
+    const bad = loadHookConfig({ JEV_STANDING_DIRECTIVES: "50" });
+    expect(bad.standingDirectives).toBe(3);
+    expect(bad.warnings.join(" ")).toContain("standing_directives=");
+  });
+
+  it("carries legacy_markers and standing_directives through the daemon's session snapshot", () => {
+    const own = sessionConfigOf(loadHookConfig({}));
+    const theirs = sessionConfigOf(loadHookConfig({ JEV_LEGACY_MARKERS: "true", JEV_STANDING_DIRECTIVES: "1" }));
+    expect(readSessionConfig(theirs, own)).toMatchObject({ legacyMarkers: true, standingDirectives: 1 });
+    expect(readSessionConfig({ ...own, legacyMarkers: "yes", standingDirectives: 99 }, own)).toMatchObject({
+      legacyMarkers: false,
+      standingDirectives: 3,
+    });
+  });
+
   /**
    * 0.2.x installs carry `gate_mode`. Ignoring it would silently change the
    * gate under someone who had turned it off, so it is read, mapped, and

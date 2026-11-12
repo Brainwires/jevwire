@@ -23,10 +23,16 @@ this plugin sends data to TypeSafe's API at `api.typesafe.ai`. Concretely:
   the subagent never saw. It is Claude's own text, not a file and not a tool result, and it is
   redacted and clamped like a user prompt. The spawn itself is never judged: no model call, no
   output.
-- **Not the affirmation marker.** When Claude answers a tripwire with `# jev:intended <reason>`, the
+- **Not the affirmation marker.** When Claude answers a tripwire with `# jev:intended "<quote>" <why>`, the
   marker is stripped from the action *before* anything is sent, precisely so that text Claude wrote
   cannot move the `in_scope` signal. It is written to the local log and shown by `/jev:why`, and it
-  never reaches the API.
+  never reaches the API. Its quote is checked locally against the session transcript
+  (`transcript_path`, a `.jsonl` file Claude Code names in the hook input): the hook reads the
+  user-typed entries of that file, on this machine, and sends none of it anywhere. The matched
+  message is written to the local log, redacted and clamped like a prompt.
+- **Standing instructions.** Up to `standing_directives` (default 3) earlier prompts of yours that
+  read as ongoing directives are sent with the gate's request, each redacted and clamped to 600
+  characters, like the last five prompts already are.
 - **Claude's final message.** Sent to the `Stop` check so it can tell whether Claude's own message
   claims the work, or verification of it, is finished.
 - **File contents — only when you point an MCP tool at them.** `jev_rank` with `paths`/`glob` and
@@ -182,9 +188,13 @@ why:
   can only inform what happens next. Only a tripwire (the hard-coded catastrophic patterns and a
   model block-grade judgment) acts before execution.
 - **A classifier tripwire is answerable by the agent.** For a model, lint or commit trip, Claude may
-  re-issue the identical call with `# jev:intended <reason>` on its last line and it passes the
-  hook. That is the point — a classifier can be wrong — but it means those trips stop a mistake, not
-  an adversary. Since 0.7.0 a code-rule trip (the hard-coded catastrophic patterns, and attempts to
+  re-issue the identical call with `# jev:intended "<quote>" <why>` on its last line and it passes
+  the hook. That is the point — a classifier can be wrong — but it means those trips stop a mistake,
+  not an adversary. Since 0.7.2 the quote has to be found in a message the user typed (tool results,
+  system reminders, task notifications and other harness-injected text are excluded), so an agent
+  steered by an injected page cannot cite instructions the user never gave; it can still cite real
+  words of the user's for an action those words do not cover, which is why every marker and its
+  matched message are in `/jev:why`. `legacy_markers` restores the trusted 0.7.1 form. Since 0.7.0 a code-rule trip (the hard-coded catastrophic patterns, and attempts to
   turn the plugin off) is not answerable this way: under the default `pattern_trips: ask` it is a
   permission prompt for you, and in `dontAsk`/`bypassPermissions` it is denied. The code rules match
   shell text, so interpreter-run code (`python -c`, `base64 -d | sh`) is left to the model judgment,

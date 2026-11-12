@@ -23,13 +23,15 @@ import {
 import { MemoizedModel } from "../../src/hooks/memo.js";
 import { fingerprint, tripIdOf, TRIP_TTL_MS } from "../../src/hooks/tripwire.js";
 import type { HookInput } from "../../src/hooks/types.js";
+import { MARKER_FORM } from "../../src/hooks/wording.js";
 import { FakeModel, noul, score } from "../helpers/fake-model.js";
 import { cleanup, makeDeps, tempDir } from "./helpers.js";
 
 const YES = 0.97;
 const NO = 0.02;
 const NOW = 1_700_000_000_000;
-const REASON = 'the request says "refund the duplicate charge on order A-104"';
+/** A marker that quotes the prompt `rig` records, so it verifies. */
+const REASON = '"fix the failing date parser test" is the request';
 
 /**
  * The seven answers a 0.5.0 gate call gets back.
@@ -221,7 +223,7 @@ describe("a code-rule trip is not the agent's to clear", () => {
     expect(record?.decision).toBe("marker-refused");
     expect(record?.source).toBe("pattern");
     expect(record?.channel).toBe("ask");
-    expect(record?.affirmation).toContain("refund the duplicate charge");
+    expect(record?.affirmation).toContain("fix the failing date parser test");
     const trip = deps.store.liveTrips("s1", NOW)[0];
     expect(trip?.id).toBe(tripIdOf(fingerprint("Bash", { command })));
     expect(trip?.denies).toBe(2);
@@ -294,7 +296,7 @@ describe("row 3 — an affirmed re-issue passes (pattern_trips: advisory for the
 
     const record = deps.store.readLog().at(-1);
     expect(record?.decision).toBe("reissue");
-    expect(record?.affirmation).toContain("refund the duplicate charge");
+    expect(record?.affirmation).toContain("fix the failing date parser test");
     expect(record?.trip_id).toBe(tripIdOf(fingerprint("Bash", { command })));
     // Closed: the trip has been answered.
     expect(deps.store.liveTrips("s1", NOW)).toEqual([]);
@@ -322,18 +324,19 @@ describe("row 3 — an affirmed re-issue passes (pattern_trips: advisory for the
     expect(model.calls).toHaveLength(1); // the original judgment, and nothing since
   });
 
-  it("does not honour a marker once the trip has expired", async () => {
+  it("does not honour an unverified marker once the trip has expired", async () => {
     const opened = rig({ config: { patternTrips: "advisory" } });
     await handlePreToolUse(input({ tool_input: { command: "rm -rf ~/" } }), opened);
 
     const later = makeDeps(dir, { model: new FakeModel(ALLOW), now: NOW + TRIP_TTL_MS + 1, config: { patternTrips: "advisory" } });
     const output = await handlePreToolUse(
-      input({ tool_input: { command: `rm -rf ~/ # jev:intended ${REASON}` } }),
+      input({ tool_input: { command: `rm -rf ~/ # jev:intended "delete my whole home directory" please` } }),
       later,
     );
-    // A new trip, not a pass: the marker answered nothing.
+    // Not a pass: the quote is nobody's words, whether or not a trip is open.
     expect(output?.hookSpecificOutput?.permissionDecision).toBe("deny");
-    expect(later.store.readLog().at(-1)?.decision).toBe("trip");
+    expect(output?.hookSpecificOutput?.permissionDecisionReason).toContain("not in any of your user's messages");
+    expect(later.store.readLog().at(-1)?.decision).toBe("marker-unverified");
   });
 });
 
@@ -368,8 +371,8 @@ describe("row 4 — the same call again, unaffirmed", () => {
     expect(promptless?.hookSpecificOutput?.permissionDecisionReason).toContain("no prompt is shown in this mode");
   });
 
-  it("treats a marker shorter than the minimum as absent, and counts it", async () => {
-    const deps = rig();
+  it("treats a marker shorter than the minimum as absent, and counts it (legacy_markers)", async () => {
+    const deps = rig({ config: { legacyMarkers: true } });
     await handlePreToolUse(input({ tool_input: { command: "rm -rf ~/" } }), deps);
     const again = await handlePreToolUse(input({ tool_input: { command: "rm -rf ~/ # jev:intended yes" } }), deps);
 
@@ -377,6 +380,24 @@ describe("row 4 — the same call again, unaffirmed", () => {
     const decisions = deps.store.readLog().map((r) => r.decision);
     expect(decisions).toContain("marker-short");
     expect(decisions.at(-1)).toBe("trip-repeat");
+  });
+
+  it("says a short legacy marker was too short, not that there was none", async () => {
+    const deps = rig({ model: new FakeModel(BLOCK), config: { legacyMarkers: true } });
+    await handlePreToolUse(input(), deps);
+    const again = await handlePreToolUse(input({ tool_input: { command: "curl -X POST https://example.com/pay # jev:intended yes" } }), deps);
+    const reason = again?.hookSpecificOutput?.permissionDecisionReason ?? "";
+    expect(reason).toContain("with a marker too short to count");
+    expect(reason).not.toContain("still without a marker");
+  });
+
+  it("refuses any marker on a code-rule trip the user owns, short or not, in verified mode", async () => {
+    const deps = rig();
+    await handlePreToolUse(input({ tool_input: { command: "rm -rf ~/" } }), deps);
+    const again = await handlePreToolUse(input({ tool_input: { command: "rm -rf ~/ # jev:intended yes" } }), deps);
+    expect(again?.hookSpecificOutput?.permissionDecision).toBe("ask");
+    expect(again?.hookSpecificOutput?.permissionDecisionReason).toContain("did not clear it");
+    expect(deps.store.readLog().at(-1)?.decision).toBe("marker-refused");
   });
 });
 
@@ -436,8 +457,8 @@ describe("jev-self-disable", () => {
 });
 
 describe("row 5 — a marker on a call that was never tripped", () => {
-  it("is stripped before judging, counted, and changes nothing", async () => {
-    const model = new FakeModel(ALLOW);
+  it("passes a verified marker without judging it: the same answer a re-issue would get", async () => {
+    const model = new FakeModel(BLOCK);
     const deps = rig({ model });
     const output = await handlePreToolUse(
       input({ tool_input: { command: `curl -X POST https://example.com/pay # jev:intended ${REASON}` } }),
@@ -445,38 +466,69 @@ describe("row 5 — a marker on a call that was never tripped", () => {
     );
 
     expect(output).toBeUndefined();
-    const action = (model.calls[0]?.state as { action: string }).action;
-    expect(action).not.toContain("jev:intended");
-    expect(action).not.toContain("refund the duplicate charge");
-    const decisions = deps.store.readLog().map((r) => r.decision);
-    expect(decisions).toContain("marker-unmatched");
+    expect(model.calls).toHaveLength(0);
+    const record = deps.store.readLog().at(-1);
+    expect(record?.decision).toBe("marker-pass");
+    expect(record?.marker_check).toBe("verified");
+    expect(record?.marker_match).toEqual({ age: 0, message: "fix the failing date parser test" });
+    expect(record?.affirmation).toContain("fix the failing date parser test");
+    expect(deps.store.liveTrips("s1", NOW)).toEqual([]);
   });
 
-  it("records the marker text, so the user can see a reflex forming", async () => {
-    const deps = rig({ model: new FakeModel(ALLOW) });
-    await handlePreToolUse(
-      input({ tool_input: { command: `curl -X POST https://example.com/pay # jev:intended ${REASON}` } }),
+  it("denies an unverified marker with the reason, and opens no trip", async () => {
+    const model = new FakeModel(ALLOW);
+    const deps = rig({ model });
+    const output = await handlePreToolUse(
+      input({ tool_input: { command: `curl -X POST https://example.com/pay # jev:intended "refund the duplicate charge" as asked` } }),
       deps,
     );
-    const record = deps.store.readLog().find((r) => r.decision === "marker-unmatched");
-    expect(record?.affirmation).toContain("refund the duplicate charge");
+    expect(output?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(output?.hookSpecificOutput?.permissionDecisionReason).toContain(
+      'the quoted text "refund the duplicate charge" is not in any of your user\'s messages',
+    );
+    expect(model.calls).toHaveLength(0);
+    const record = deps.store.readLog().at(-1);
+    expect(record?.decision).toBe("marker-unverified");
+    expect(record?.marker_refusal).toBe("not-found");
+    expect(deps.store.liveTrips("s1", NOW)).toEqual([]);
   });
 
-  it("does not let a marker move the judgment it was stripped from", async () => {
+  it("denies an unquoted marker in verified mode, and says a quote is needed", async () => {
+    const deps = rig({ model: new FakeModel(ALLOW) });
+    const output = await handlePreToolUse(
+      input({ tool_input: { command: "curl -X POST https://example.com/pay # jev:intended the user asked for this payment" } }),
+      deps,
+    );
+    expect(output?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(output?.hookSpecificOutput?.permissionDecisionReason).toContain("carries no quote");
+    expect(deps.store.readLog().at(-1)?.marker_refusal).toBe("no-quote");
+  });
+
+  it("keeps the marker out of the action whenever a judgment does happen (legacy short marker)", async () => {
     // The same command, with and without a marker, is judged identically
     // because the marker never reaches the model.
     const bare = new FakeModel(ALLOW);
     await handlePreToolUse(input(), rig({ model: bare }));
     const marked = new FakeModel(ALLOW);
     await handlePreToolUse(
-      input({ tool_input: { command: `curl -X POST https://example.com/pay # jev:intended ${REASON}` } }),
-      rig({ model: marked }),
+      input({ tool_input: { command: "curl -X POST https://example.com/pay # jev:intended ok" } }),
+      rig({ model: marked, config: { legacyMarkers: true } }),
     );
     expect((marked.calls[0]?.state as { action: unknown }).action).toEqual(
       (bare.calls[0]?.state as { action: unknown }).action,
     );
+    expect(JSON.stringify(marked.calls[0]?.state)).not.toContain("jev:intended");
+  });
+
+  it("leaves a code-rule trip the user owns in place, and logs the marker as unmatched", async () => {
+    const deps = rig();
+    const output = await handlePreToolUse(input({ tool_input: { command: `rm -rf ~/ # jev:intended ${REASON}` } }), deps);
+    expect(output?.hookSpecificOutput?.permissionDecision).toBe("ask");
+    const decisions = deps.store.readLog().map((r) => r.decision);
+    expect(decisions).toEqual(["marker-unmatched", "trip"]);
   });
 });
+
 
 describe("row 6 — no model", () => {
   it("fails open on a judge-class call with no key", async () => {
@@ -591,7 +643,7 @@ describe("row 7 — a model block trips", () => {
     expect(output?.hookSpecificOutput?.permissionDecision).toBe("deny");
     expect(reason).toContain("this Bash call was not run");
     expect(reason).toContain("The jev classifier scored it");
-    expect(reason).toContain("# jev:intended <the sentence of the user's request");
+    expect(reason).toContain(MARKER_FORM);
     expect(reason).not.toContain("true # jev:intended"); // Bash needs no sidecar.
 
     const record = deps.store.readLog().at(-1);
@@ -789,10 +841,30 @@ describe("the sidecar affirmation", () => {
     expect(decisions).not.toContain("affirm-unmatched");
   });
 
-  it("counts a too-short sidecar reason rather than accepting it", async () => {
-    const deps = rig();
+  it("counts a too-short sidecar reason rather than accepting it (legacy_markers)", async () => {
+    const deps = rig({ config: { legacyMarkers: true } });
     await handlePreToolUse(input({ tool_input: { command: "true # jev:intended t-deadbeef: yes" } }), deps);
     expect(deps.store.readLog().at(-1)?.decision).toBe("marker-short");
+  });
+
+  it("denies a sidecar whose quote is not the user's, and leaves the trip unaffirmed", async () => {
+    const model = new FakeModel(BLOCK);
+    const deps = rig({ model });
+    const write = input({ tool_name: "Write", tool_input: { file_path: "/etc/hosts", content: "x" } });
+    await handlePreToolUse(write, deps);
+    const id = tripIdOf(fingerprint("Write", { file_path: "/etc/hosts", content: "x" }));
+
+    const sidecar = await handlePreToolUse(input({ tool_input: { command: `true # jev:intended ${id}: "rewrite the hosts file" ok` } }), deps);
+    expect(sidecar?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(sidecar?.hookSpecificOutput?.permissionDecisionReason).toContain("this sidecar affirmation did not clear the trip");
+    expect(sidecar?.hookSpecificOutput?.permissionDecisionReason).toContain("not in any of your user's messages");
+    const record = deps.store.readLog().at(-1);
+    expect(record?.decision).toBe("affirm-unverified");
+    expect(record?.marker_refusal).toBe("not-found");
+    expect(deps.store.liveTrips("s1", NOW)[0]?.affirmed_at).toBeUndefined();
+    // The write, again: still tripped.
+    expect((await handlePreToolUse(write, deps))?.hookSpecificOutput?.permissionDecision).toBe("deny");
+    expect(deps.store.readLog().at(-1)?.decision).toBe("trip-repeat");
   });
 });
 

@@ -11,7 +11,8 @@
  *  - **trip** — `deny`. The only thing here that acts before execution. The
  *    text rides in `permissionDecisionReason`, because `additionalContext` is
  *    dropped when the call is blocked. The agent may re-issue the identical
- *    call with an affirmation marker and it passes without further judgment.
+ *    call with an affirmation marker quoting the user, and once the quote is
+ *    found in the user's messages it passes without further judgment.
  *
  * A classifier never prompts anybody: for a model, lint or commit trip,
  * `permissionDecision: "ask"` is reachable only through the explicit
@@ -44,6 +45,7 @@ import {
   actionSubject,
   blastLabel,
   gateErrorSystemMessage,
+  markerUnverifiedText,
   modelTripText,
   noteText,
   patternTripText,
@@ -52,6 +54,8 @@ import {
   type PatternTripNeeds,
 } from "../wording.js";
 import type { HookConfig } from "../config.js";
+import { checkMarker, markerAccepted, type MarkerCheck } from "../intent.js";
+import { standingDirectives, standingTag, MAX_DIRECTIVE_CHARS, STANDING_PREFIX, type StandingDirective } from "../standing.js";
 import type { Deps, EscalatingDecision, HookInput, HookOutput } from "../types.js";
 
 /** Longest tool input we will pay to have judged. */
@@ -196,17 +200,47 @@ function boundAction(action: GateAction, max: number): GateAction {
  * Filled from the newest backwards, like `requestText` before it: what gets
  * cut is the oldest context and never the instruction the user just gave.
  */
-export function gateRequest(prompts: readonly string[], max: number): GateRequest {
+export function gateRequest(prompts: readonly string[], max: number, standing: readonly StandingDirective[] = []): GateRequest {
   const latest = redactAndClamp(prompts[prompts.length - 1] ?? "", max);
-  const previous: string[] = [];
   let used = latest.length;
+  // Standing instructions come next, before the recent prompts, each with a
+  // budget of its own: the recent prompts are the ones a long latest prompt
+  // may crowd out, and a standing instruction exists because it fell out of
+  // that window in the first place. Sent oldest first, ahead of the rest.
+  const tagged: string[] = [];
+  for (const directive of standing) {
+    const room = Math.min(max - used, MAX_DIRECTIVE_CHARS);
+    // Too little room to carry even the tag and a few words: stop here
+    // rather than send a fragment the caller cannot count as one.
+    if (room < MIN_STANDING_ROOM) break;
+    const text = redactAndClamp(standingTag(directive), room);
+    tagged.unshift(text);
+    used += text.length;
+  }
+  const previous: string[] = [];
   for (let index = prompts.length - 2; index >= 0; index -= 1) {
     const room = max - used;
     if (room <= 0) break;
     previous.unshift(redactAndClamp(prompts[index] as string, room));
     used += (previous[0] as string).length;
   }
-  return { latest, previous };
+  return { latest, previous: [...tagged, ...previous] };
+}
+
+/** The least budget a standing instruction is sent in. */
+const MIN_STANDING_ROOM = 80;
+
+/** The log fields that say how a marker fared. */
+function markerFields(check: MarkerCheck | undefined): Partial<DecisionRecord> {
+  if (check === undefined || check.status === "short") return {};
+  if (check.status === "verified") {
+    return {
+      marker_check: "verified",
+      marker_match: { age: check.match.age, message: redactAndClamp(check.match.message, MAX_REASON_CHARS) },
+    };
+  }
+  if (check.status === "legacy") return { marker_check: "legacy" };
+  return { marker_check: "unverified", marker_refusal: check.why };
 }
 
 export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<HookOutput | undefined> {
@@ -247,25 +281,62 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
   // A `true # jev:intended t-…: <reason>` call: the sidecar affirmation, which
   // is how a Write, an Edit or an MCP call answers a tripwire. It emits nothing.
+  // The marker's one verdict for this call. Every branch that reads the
+  // marker reads this, so the same input gets the same answer; it is computed
+  // only on a path that uses it, because it may read the transcript.
+  const verdictOfMarker = (): MarkerCheck | undefined =>
+    marker === undefined
+      ? undefined
+      : checkMarker(marker, {
+          legacy: config.legacyMarkers,
+          transcriptPath: input.transcript_path,
+          prompts: store.readSession(sessionId).prompts,
+        });
+
   if (verdict.kind === "affirm") {
-    if (marker?.reason === undefined) {
+    const check = verdictOfMarker();
+    const checked = markerFields(check);
+    if (marker === undefined || check === undefined || check.status === "short") {
       store.append({ ...base, decision: "marker-short" });
       return undefined;
     }
-    const affirmation = redactAndClamp(marker.reason, MAX_REASON_CHARS);
+    const affirmation = redactAndClamp(marker.reason ?? "", MAX_REASON_CHARS);
     const trip = marker.trip_id === undefined ? undefined : store.findTripById(sessionId, marker.trip_id, now);
     if (trip === undefined) {
-      store.append({ ...base, decision: "affirm-unmatched", affirmation, ...(marker.trip_id !== undefined ? { trip_id: marker.trip_id } : {}) });
+      store.append({ ...base, decision: "affirm-unmatched", affirmation, ...checked, ...(marker.trip_id !== undefined ? { trip_id: marker.trip_id } : {}) });
       return undefined;
     }
     // A code-rule trip is the user's to clear. The sidecar itself is `true`
     // and runs; the trip stays open and the marker is recorded as refused.
     if (!agentMayAffirm(config, trip.source)) {
-      store.append({ ...base, decision: "affirm-refused", trip_id: trip.id, fingerprint: trip.fingerprint, source: trip.source, affirmation });
+      store.append({ ...base, decision: "affirm-refused", trip_id: trip.id, fingerprint: trip.fingerprint, source: trip.source, affirmation, ...checked });
       return undefined;
     }
+    // A quote that is not the user's clears nothing. The sidecar is `true`,
+    // so denying it costs nothing and is the only way the agent hears why.
+    if (check.status === "unverified") {
+      const text = markerUnverifiedText({
+        id: trip.id,
+        tool: toolName,
+        why: check.why,
+        ...(marker.quote !== undefined ? { quote: redactAndClamp(marker.quote, MAX_REASON_CHARS) } : {}),
+        sidecar: true,
+      });
+      store.append({
+        ...base,
+        decision: "affirm-unverified",
+        trip_id: trip.id,
+        fingerprint: trip.fingerprint,
+        source: trip.source,
+        affirmation,
+        ...checked,
+        channel: "deny",
+        emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
+      });
+      return tripOutput("deny", text);
+    }
     store.affirmTrip(sessionId, trip.id, affirmation, now);
-    store.append({ ...base, decision: "affirm", trip_id: trip.id, fingerprint: trip.fingerprint, affirmation });
+    store.append({ ...base, decision: "affirm", trip_id: trip.id, fingerprint: trip.fingerprint, affirmation, ...checked });
     return undefined;
   }
 
@@ -298,16 +369,23 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
 
   const fp = fingerprint(toolName, action);
   const open = store.findTripByFingerprint(sessionId, fp, now);
+  const check = verdictOfMarker();
+  const checked = markerFields(check);
 
-  // A marker shorter than the minimum is treated as absent — and counted, so
-  // `/jev:calibrate` can show a reflex forming rather than guess at one.
-  if (marker?.short === true) {
+  // A legacy-mode marker shorter than the minimum is treated as absent — and
+  // counted, so `/jev:calibrate` can show a reflex forming rather than guess at
+  // one. Everything else a marker can be is `live`: it either clears the call
+  // or is refused out loud, the same way every time.
+  if (check?.status === "short") {
     store.append({ ...base, decision: "marker-short", fingerprint: fp, ...(open !== undefined ? { trip_id: open.id } : {}) });
   }
+  const live = marker !== undefined && check !== undefined && check.status !== "short";
+  const accepted = live && markerAccepted(check);
+  const quoteShown = marker?.quote === undefined ? {} : { quote: redactAndClamp(marker.quote, MAX_REASON_CHARS) };
 
   if (open !== undefined) {
-    const affirmation = marker?.reason ?? open.affirmation;
-    if (affirmation !== undefined && !agentMayAffirm(config, open.source)) {
+    const affirmation = (live ? marker.reason : undefined) ?? open.affirmation;
+    if ((live || affirmation !== undefined) && !agentMayAffirm(config, open.source)) {
       // A marker on a code-rule trip the agent cannot clear. The call is not
       // run, the trip stays open, and the attempt is counted and logged with
       // the marker text so the user can see the reflex forming.
@@ -328,8 +406,29 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
         fingerprint: fp,
         source: open.source,
         channel,
-        affirmation: redactAndClamp(affirmation, MAX_REASON_CHARS),
+        ...(affirmation !== undefined ? { affirmation: redactAndClamp(affirmation, MAX_REASON_CHARS) } : {}),
+        ...checked,
         emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
+        ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
+      });
+      return tripOutput(channel, text);
+    }
+    if (live && check.status === "unverified") {
+      // A marker whose quote is not the user's. Not a re-issue: the call is
+      // not run, the trip stays open, and the agent is told which check failed.
+      const attempt = store.repeatTrip(sessionId, open.id, now);
+      const channel = tripChannel(config, input.permission_mode, open.source);
+      const text = markerUnverifiedText({ id: open.id, tool: toolName, why: check.why, ...quoteShown });
+      store.append({
+        ...base,
+        decision: "marker-unverified",
+        trip_id: open.id,
+        fingerprint: fp,
+        source: open.source,
+        channel,
+        ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
+        ...checked,
+        emitted: redactAndClamp(`${text} (attempt ${attempt})`, MAX_EMITTED_CHARS),
         ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
       });
       return tripOutput(channel, text);
@@ -344,6 +443,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
         fingerprint: fp,
         source: open.source,
         affirmation: redactAndClamp(affirmation, MAX_REASON_CHARS),
+        ...checked,
         ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
       });
       if (input.tool_use_id !== undefined) {
@@ -365,6 +465,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       attempt,
       seconds: (now - open.ts) / 1000,
       ...(open.source === "pattern" ? { needs: patternNeeds(config, channel) } : {}),
+      ...(check?.status === "short" ? { shortMarker: true } : {}),
     });
     store.append({
       ...base,
@@ -378,15 +479,53 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
     return tripOutput(channel, text);
   }
 
-  // Row 5: a marker on a call that was never tripped. It has already been
-  // stripped out of `action`; all that is left is to say so in the log.
-  if (marker?.reason !== undefined) {
-    store.append({
-      ...base,
-      decision: "marker-unmatched",
-      fingerprint: fp,
-      affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS),
-    });
+  // Row 5: a marker on a call with no trip open against it.
+  //
+  // Before 0.7.2 it was stripped, logged and ignored, and the call was judged
+  // as if it carried none — so a marked call could be refused, and the very
+  // same call accepted a moment later because the refusal had opened a trip
+  // for it to answer. Now the marker gets the same verdict either way: a
+  // verified (or, in legacy mode, accepted) marker passes the call without a
+  // judgment, exactly as it would pass the re-issue; a refused one is denied
+  // with the reason. Only a code-rule trip the agent may not clear outranks it.
+  if (live) {
+    const userOwned = verdict.kind === "escalate" && !agentMayAffirm(config, "pattern");
+    if (userOwned) {
+      store.append({
+        ...base,
+        decision: "marker-unmatched",
+        fingerprint: fp,
+        ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
+        ...checked,
+      });
+    } else if (accepted) {
+      store.append({
+        ...base,
+        decision: "marker-pass",
+        fingerprint: fp,
+        affirmation: redactAndClamp(marker.reason ?? "", MAX_REASON_CHARS),
+        ...checked,
+        ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
+      });
+      if (input.tool_use_id !== undefined) {
+        store.rememberReissue(sessionId, { tool_use_id: input.tool_use_id, ts: now, tool_name: toolName });
+      }
+      return undefined;
+    } else if (check.status === "unverified") {
+      const channel = tripChannel(config, input.permission_mode, "model");
+      const text = markerUnverifiedText({ tool: toolName, why: check.why, ...quoteShown });
+      store.append({
+        ...base,
+        decision: "marker-unverified",
+        fingerprint: fp,
+        channel,
+        ...(marker.reason !== undefined ? { affirmation: redactAndClamp(marker.reason, MAX_REASON_CHARS) } : {}),
+        ...checked,
+        emitted: redactAndClamp(text, MAX_EMITTED_CHARS),
+        ...(input.tool_use_id !== undefined ? { tool_use_id: input.tool_use_id } : {}),
+      });
+      return tripOutput(channel, text);
+    }
   }
 
   if (verdict.kind === "escalate") {
@@ -456,6 +595,11 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
    */
   const subagent = input.agent_type;
   const task = subagent === undefined ? undefined : store.takeSubagentTask(sessionId, subagent, now);
+  // Standing instructions widen the user's request, never a subagent's task:
+  // a subagent is doing what its parent told it, not what the user said
+  // twenty prompts ago.
+  const wantStanding: StandingDirective[] =
+    subagent === undefined && session.prompts.length > 0 ? standingDirectives(session, config.standingDirectives) : [];
   const userRequest: GateRequest | undefined =
     task !== undefined
       ? {
@@ -465,8 +609,14 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       : subagent !== undefined
         ? undefined
         : session.prompts.length > 0
-          ? gateRequest(session.prompts, MAX_ACTION_CHARS)
+          ? gateRequest(session.prompts, MAX_ACTION_CHARS, wantStanding)
           : undefined;
+  // The ones that fit the budget: `gateRequest` takes them newest first and
+  // stops at the first that does not, so they are a prefix of the list.
+  const standing = wantStanding.slice(
+    0,
+    task === undefined && userRequest !== undefined ? userRequest.previous.filter((p) => p.startsWith(STANDING_PREFIX)).length : 0,
+  );
   const knownRequest = userRequest !== undefined;
   const scopeSource: NonNullable<DecisionRecord["scope_source"]> =
     task !== undefined ? "subagent_task" : knownRequest ? "prompts" : "none";
@@ -536,6 +686,9 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       blast_source: result.blast_radius.source,
       scope_source: scopeSource,
       ...(subagent !== undefined ? { subagent } : {}),
+      ...(standing.length > 0
+        ? { standing: standing.map((d) => ({ age: d.age, text: redactAndClamp(d.text, MAX_REASON_CHARS) })) }
+        : {}),
       reasons: result.reasons,
       ...modelCost(result),
     };
@@ -553,8 +706,8 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
       notes_this_prompt: session.notes_this_prompt ?? 0,
     });
     const firm: string[] = [...outcome.firm];
-    /** How many requests the scope judgment actually had to read. */
-    const prompts = userRequest === undefined ? 0 : 1 + userRequest.previous.length;
+    /** How many user prompts the scope judgment actually had to read, standing instructions apart. */
+    const prompts = userRequest === undefined ? 0 : 1 + userRequest.previous.length - standing.length;
 
     if (outcome.outcome === "trip") {
       const id = tripIdOf(fp);
@@ -566,6 +719,7 @@ export async function handlePreToolUse(input: HookInput, deps: Deps): Promise<Ho
         prompts,
         p_unrelated: scope.unrelated,
         sidecar: toolName !== "Bash",
+        ...(standing.length > 0 ? { standing } : {}),
       });
       store.openTrip(
         sessionId,

@@ -234,6 +234,14 @@ export function statusReport(
     `  gate: ${config.gate}`,
     `  ask_on_trip: ${config.askOnTrip}${config.askOnTrip ? "" : " (a classifier tripwire denies to Claude; the user is not prompted)"}`,
     `  pattern_trips: ${config.patternTrips}${PATTERN_TRIP_NOTES[config.patternTrips]}`,
+    `  legacy_markers: ${config.legacyMarkers}${
+      config.legacyMarkers
+        ? " (an unquoted # jev:intended marker is accepted on trust)"
+        : " (a marker has to quote one of the user's messages; the quote is checked against the transcript)"
+    }`,
+    `  standing_directives: ${config.standingDirectives}${
+      config.standingDirectives === 0 ? " (off)" : " (earlier \"keep going with …\" prompts judged with the last five)"
+    }`,
     `  stop_check: ${config.stopCheck}   screen_results: ${config.screenResults}   route_prompts: ${config.routePrompts}`,
     `  thresholds: auto ${config.autoThreshold}, review ${config.reviewThreshold}, choice confidence ${config.confidenceThreshold}`,
     `  per-call timeout: ${config.timeoutMs} ms, retries: ${config.maxRetries}`,
@@ -254,7 +262,9 @@ export function statusReport(
     `  tripwires: ${count("trip")} opened, ${count("trip-repeat")} repeats, ${count("reissue")} re-issued (${count(
       "reissue-ran",
     )} ran, ${count("reissue-failed")} failed)`,
-    `  markers: ${count("affirm")} sidecar affirmations, ${count("marker-unmatched")} on untripped calls, ${count(
+    `  markers: ${count("affirm")} sidecar affirmations, ${count("marker-pass")} passed on a verified quote, ${count(
+      "marker-unverified",
+    ) + count("affirm-unverified")} refused (quote not the user's), ${count("marker-unmatched")} on user-owned code-rule calls, ${count(
       "marker-short",
     )} too short`,
     " by event:",
@@ -289,14 +299,46 @@ export function statusReport(
 }
 
 /** What `/jev:why` shows with no filter: everything the agent was told, plus errors. */
-const WHY_ALL = ["note", "trip", "trip-repeat", "reissue", "affirm", "marker-refused", "affirm-refused", "error"];
+const WHY_ALL = [
+  "note",
+  "trip",
+  "trip-repeat",
+  "reissue",
+  "affirm",
+  "marker-pass",
+  "marker-unverified",
+  "affirm-unverified",
+  "marker-refused",
+  "affirm-refused",
+  "error",
+];
 /**
  * `/jev:why <n> trips`: the tripwire story, including how each trip ended —
  * and, for a code-rule trip, the markers the agent wrote that cleared nothing.
  */
-const WHY_TRIPS = ["trip", "trip-repeat", "reissue", "affirm", "marker-refused", "affirm-refused", "reissue-ran", "reissue-failed"];
+const WHY_TRIPS = [
+  "trip",
+  "trip-repeat",
+  "reissue",
+  "affirm",
+  "marker-pass",
+  "marker-unverified",
+  "affirm-unverified",
+  "marker-refused",
+  "affirm-refused",
+  "reissue-ran",
+  "reissue-failed",
+];
 
 export type WhyFilter = "all" | "notes" | "trips";
+
+/** What each marker refusal means, as `/jev:why` says it. */
+const MARKER_REFUSAL_TEXT: Record<NonNullable<DecisionRecord["marker_refusal"]>, string> = {
+  "no-quote": "the marker carried no quote",
+  empty: "the quote had no words in it",
+  "too-short": "the quote was under three words and not a whole user message",
+  "not-found": "the quoted text is not in any of the user's messages",
+};
 
 export function whyReport(store: Store, limit = 3, filter: WhyFilter = "all"): string {
   const wanted = filter === "notes" ? ["note"] : filter === "trips" ? WHY_TRIPS : WHY_ALL;
@@ -318,6 +360,19 @@ export function whyReport(store: Store, limit = 3, filter: WhyFilter = "all"): s
     // answerable without guessing at which template fired.
     if (record.emitted !== undefined) lines.push(`  said to Claude: ${record.emitted}`);
     if (record.affirmation !== undefined) lines.push(`  marker text: ${record.affirmation}`);
+    // Whether the quote was the user's, and which message it came from: the
+    // line that says a marker was more than the agent's say-so.
+    if (record.marker_check === "verified" && record.marker_match !== undefined) {
+      const ago = record.marker_match.age === 0 ? "the latest user message" : `the user message ${record.marker_match.age} back`;
+      lines.push(`  quote verified in ${ago}: ${record.marker_match.message}`);
+    } else if (record.marker_check === "unverified") {
+      lines.push(`  quote refused: ${MARKER_REFUSAL_TEXT[record.marker_refusal ?? "not-found"]}`);
+    } else if (record.marker_check === "legacy") {
+      lines.push("  quote not verified: accepted on trust (legacy_markers)");
+    }
+    if (record.standing !== undefined && record.standing.length > 0) {
+      lines.push(`  standing instructions read: ${record.standing.map((d) => `${d.age} prompts ago: ${d.text}`).join(" | ")}`);
+    }
     if (record.firm !== undefined && record.firm.length > 0) lines.push(`  driven by: ${record.firm.join(", ")}`);
     if (record.suppressed !== undefined) lines.push(`  not said because: ${record.suppressed}`);
     if (record.signals !== undefined) {
@@ -594,10 +649,12 @@ export function calibrateReport(config: HookConfig, store: Store): string {
   lines.push(
     "",
     "3. Marker hygiene",
-    `  markers on calls that were never tripped: ${decisions("marker-unmatched").length}`,
-    `  markers too short to count as a reason: ${decisions("marker-short").length}`,
+    `  markers refused because the quote was not the user's: ${decisions("marker-unverified").length + decisions("affirm-unverified").length}`,
+    `  markers that passed an untripped call on a verified quote: ${decisions("marker-pass").length}`,
+    `  markers on user-owned code-rule calls (never honoured): ${decisions("marker-unmatched").length}`,
+    `  markers too short to count as a reason (legacy_markers): ${decisions("marker-short").length}`,
     `  sidecar affirmations naming an unknown trip: ${decisions("affirm-unmatched").length}`,
-    "  The first line is the reflex metric: a marker only ever answers a specific tripwire.",
+    "  The first line is the reflex metric: a marker has to quote the user, and a refusal is the agent claiming words nobody wrote.",
   );
 
   // Section 4 is about gate signals, so it needs gate judgments. Section 5

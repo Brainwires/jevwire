@@ -20,6 +20,9 @@ import {
   commitSecretTripText,
   lintNoteText,
   lintTripText,
+  MARKER_FORM,
+  markerUnverifiedText,
+  consideredText,
   injectionNoteText,
   modelTripText,
   MAX_SUBJECT_CHARS,
@@ -84,7 +87,52 @@ const EVERY_TRIP: [string, string][] = [
   ["lint trip secret", lintTripText({ id: "t-1a2b3c4d", tool: "Edit", finding: "hardcodes_secret", p: 0.95 })],
   ["lint trip test", lintTripText({ id: "t-1a2b3c4d", tool: "Write", finding: "removes_test", p: 0.92 })],
   ["commit secret trip", commitSecretTripText({ id: "t-1a2b3c4d", p: 0.95 })],
+  ["repeat, short legacy marker", tripRepeatText({ id: "t-1a2b3c4d", attempt: 2, seconds: 3, shortMarker: true })],
+  [
+    "model trip with standing instructions",
+    modelTripText({
+      id: "t-1a2b3c4d",
+      tool: "Bash",
+      signals: SIGNALS,
+      prompts: 5,
+      p_unrelated: 0.86,
+      sidecar: false,
+      standing: [{ age: 7, text: "keep going with the jevwire fix, and its next release" }],
+    }),
+  ],
+  ["marker unverified, not found", markerUnverifiedText({ id: "t-1a2b3c4d", tool: "Bash", why: "not-found", quote: "ship it all" })],
+  ["marker unverified, no quote", markerUnverifiedText({ tool: "Bash", why: "no-quote" })],
+  ["marker unverified, too short", markerUnverifiedText({ tool: "Bash", why: "too-short", quote: "yes" })],
+  ["marker unverified, sidecar", markerUnverifiedText({ id: "t-1a2b3c4d", tool: "Bash", why: "empty", sidecar: true })],
 ];
+
+describe("verified markers", () => {
+  it("names the failed check and the marker form", () => {
+    const text = markerUnverifiedText({ id: "t-1a2b3c4d", tool: "Bash", why: "not-found", quote: "ship it all" });
+    expect(text).toContain("tripwire t-1a2b3c4d: this Bash call was not run");
+    expect(text).toContain('the quoted text "ship it all" is not in any of your user\'s messages');
+    expect(text).toContain(MARKER_FORM);
+  });
+
+  it("says a short quote has to be a whole message", () => {
+    expect(markerUnverifiedText({ tool: "Bash", why: "too-short", quote: "yes" })).toContain(
+      "shorter than three words and is not the whole of any of your user's messages",
+    );
+  });
+
+  it("lists the standing instructions a trip was judged against, with their age", () => {
+    expect(consideredText(5)).toBe("the last 5 user prompts");
+    expect(consideredText(1)).toBe("the last 1 user prompt");
+    const text = consideredText(5, [
+      { age: 7, text: "keep going with the jevwire fix, and its next release" },
+      { age: 1, text: `finish ${"x".repeat(100)}` },
+    ]);
+    expect(text).toContain("the last 5 user prompts and 2 standing instructions from earlier");
+    expect(text).toContain('7 prompts ago: "keep going with the jevwire fix, and its next release"');
+    expect(text).toContain("1 prompt ago:");
+    expect(text).toContain("…");
+  });
+});
 
 describe("no agent-facing text is an instruction", () => {
   for (const [name, text] of [...EVERY_NOTE, ...EVERY_TRIP]) {
@@ -205,7 +253,8 @@ describe("trip text", () => {
     expect(bash).toContain("destructive (p=0.94)");
     expect(bash).toContain("(scope: unrelated p=0.86)");
     expect(bash).toContain("can be wrong");
-    expect(bash).toContain("# jev:intended <the sentence of the user's request that requires this exact action>");
+    expect(bash).toContain(MARKER_FORM);
+    expect(bash).toContain("checked against the user's messages in the session transcript");
     expect(bash).toContain("Claude Code's own permission rules still apply");
     expect(bash).toContain("A narrower action needs no marker");
     expect(bash).toContain("/jev:why");
@@ -222,7 +271,7 @@ describe("trip text", () => {
         p_unrelated: 0.86,
         sidecar: true,
       }),
-    ).toContain("true # jev:intended t-1a2b3c4d: <that sentence>");
+    ).toContain(`true # jev:intended t-1a2b3c4d: "<the quoted words>"`);
   });
 
   it("names whichever finding was stronger", () => {

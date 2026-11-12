@@ -19,7 +19,25 @@
 import type { FirmReason } from "./advisory.js";
 import type { GateActionSignals } from "../tools/gate-action-core.js";
 import { compactJson, redactAndClamp } from "./redact.js";
+import type { StandingDirective } from "./standing.js";
 import type { EscalatingDecision } from "./types.js";
+
+/**
+ * The marker as every trip text spells it.
+ *
+ * Since 0.7.2 the marker quotes the user: the words in double quotes are
+ * looked up in the user's own messages in the session transcript, and a quote
+ * that is not there does not clear anything.
+ */
+export const MARKER_FORM = `# jev:intended "<words quoted exactly from one of the user's messages>" <optional why>`;
+
+/** The sidecar form of `MARKER_FORM`, for a trip on a tool that is not Bash. */
+export function sidecarMarker(id: string): string {
+  return `true # jev:intended ${id}: "<the quoted words>" <optional why>`;
+}
+
+/** The clause that says how a marker is checked. */
+const MARKER_CHECK = `The quote is checked against the user's messages in the session transcript (a quote under three words counts only as a whole message).`;
 
 /** Longest `{subject}` — the redacted head of the command or path. */
 export const MAX_SUBJECT_CHARS = 80;
@@ -224,6 +242,25 @@ export interface ModelTripInput {
   p_unrelated: number;
   /** True for every tool but Bash: the marker has to arrive as a separate call. */
   sidecar: boolean;
+  /** Standing instructions the scope judgment also read, newest first. */
+  standing?: readonly StandingDirective[];
+}
+
+/** Longest excerpt of a standing instruction quoted back in a trip. */
+const STANDING_EXCERPT_CHARS = 60;
+
+/** What the scope judgment read, as a trip says it. */
+export function consideredText(prompts: number, standing: readonly StandingDirective[] = []): string {
+  const recent = `the last ${prompts} user prompt${prompts === 1 ? "" : "s"}`;
+  if (standing.length === 0) return recent;
+  const listed = standing
+    .map((d) => {
+      const flat = d.text.replace(/\s+/g, " ").trim();
+      const excerpt = flat.length > STANDING_EXCERPT_CHARS ? `${flat.slice(0, STANDING_EXCERPT_CHARS - 1)}…` : flat;
+      return `${d.age} prompt${d.age === 1 ? "" : "s"} ago: "${excerpt}"`;
+    })
+    .join("; ");
+  return `${recent} and ${standing.length} standing instruction${standing.length === 1 ? "" : "s"} from earlier (${listed})`;
 }
 
 /** Which finding to name first in a model trip's one sentence of evidence. */
@@ -243,16 +280,16 @@ function tripFinding(input: ModelTripInput): string {
  */
 export function modelTripText(input: ModelTripInput): string {
   const sidecarClause = input.sidecar
-    ? `, or, for this tool, after a separate Bash call \`true # jev:intended ${input.id}: <that sentence>\``
+    ? `, or, for this tool, after a separate Bash call \`${sidecarMarker(input.id)}\``
     : "";
   return (
     `[jev] tripwire ${input.id}: this ${input.tool} call was not run. The jev classifier scored it ` +
-    `${tripFinding(input)} and not part of the last ${input.prompts} user prompts ` +
+    `${tripFinding(input)} and not part of ${consideredText(input.prompts, input.standing)} ` +
     `(scope: unrelated p=${p(input.p_unrelated)}). The classifier reads literally and can be wrong. The call is ` +
-    `re-runnable unchanged with the marker \`# jev:intended <the sentence of the user's request that ` +
-    `requires this exact action>\` on its last line${sidecarClause}; it then passes this hook without ` +
-    `further judgment and Claude Code's own permission rules still apply. A narrower action needs no ` +
-    `marker. Marker text is recorded and shown to the user by /jev:why.`
+    `re-runnable unchanged with the marker \`${MARKER_FORM}\` on its last line${sidecarClause}, quoting the ` +
+    `words of the user's request that ask for this exact action. ${MARKER_CHECK} A matching quote passes this ` +
+    `hook without further judgment and Claude Code's own permission rules still apply. A narrower action needs ` +
+    `no marker. Marker text is recorded and shown to the user by /jev:why.`
   );
 }
 
@@ -275,11 +312,11 @@ export type PatternTripNeeds = "advisory" | EscalatingDecision;
 function patternTripWayForward(needs: PatternTripNeeds, tool: string, id: string): string {
   if (needs === "advisory") {
     return (
-      `It is re-runnable unchanged with \`# jev:intended <the sentence of the user's request that ` +
-      `requires this exact ${tool === "Bash" ? "command" : "call"}>\` on its last line` +
-      (tool === "Bash" ? "" : `, or, for this tool, after a separate Bash call \`true # jev:intended ${id}: <that sentence>\``) +
-      `; it then passes this hook and Claude Code's own permission rules still apply. Marker text is ` +
-      `recorded and shown to the user by /jev:why.`
+      `It is re-runnable unchanged with \`${MARKER_FORM}\` on its last line` +
+      (tool === "Bash" ? "" : `, or, for this tool, after a separate Bash call \`${sidecarMarker(id)}\``) +
+      `, quoting the words of the user's request that ask for this exact ${tool === "Bash" ? "command" : "call"}. ` +
+      `${MARKER_CHECK} A matching quote passes this hook and Claude Code's own permission rules still apply. ` +
+      `Marker text is recorded and shown to the user by /jev:why.`
     );
   }
   if (needs === "deny") {
@@ -325,14 +362,21 @@ export function patternTripText(input: {
  * `needs` is set for a code-rule trip the agent cannot clear, so the repeat
  * does not invite the marker the first text did not invite either.
  */
-export function tripRepeatText(input: { id: string; attempt: number; seconds: number; needs?: PatternTripNeeds }): string {
+export function tripRepeatText(input: {
+  id: string;
+  attempt: number;
+  seconds: number;
+  needs?: PatternTripNeeds;
+  /** A marker was on the call but too short to count (legacy mode only). */
+  shortMarker?: boolean;
+}): string {
   const ago = `${Math.max(0, Math.round(input.seconds))}s ago`;
   const needs = input.needs ?? "advisory";
   if (needs === "advisory") {
+    const state = input.shortMarker === true ? "with a marker too short to count as a reason" : "still without a marker";
     return (
-      `[jev] tripwire ${input.id} (attempt ${input.attempt}): identical to the call denied ${ago} and still ` +
-      `without a marker. It passes only with \`# jev:intended <why the user's request requires this>\` ` +
-      `(or the sidecar form for non-Bash tools).`
+      `[jev] tripwire ${input.id} (attempt ${input.attempt}): identical to the call denied ${ago} and ${state}. ` +
+      `It passes only with \`${MARKER_FORM}\` on its last line (or the sidecar form for non-Bash tools).`
     );
   }
   return (
@@ -342,6 +386,42 @@ export function tripRepeatText(input: { id: string; attempt: number; seconds: nu
       ? `, and no prompt is shown in this mode: it is runnable by the user directly, or by the agent after ` +
         `they change pattern_trips in the plugin settings.`
       : `; Claude Code is asking the user now.`)
+  );
+}
+
+/** Why a marker's quote was refused, as the deny says it. */
+export type MarkerRefusal = "no-quote" | "empty" | "too-short" | "not-found";
+
+/**
+ * A marker that did not clear anything because its quote could not be found.
+ *
+ * A deny, so the agent sees it before anything runs. It says which check
+ * failed, and that nothing else about the call was judged by it.
+ */
+export function markerUnverifiedText(input: {
+  /** The open trip, when there is one. */
+  id?: string;
+  tool: string;
+  why: MarkerRefusal;
+  /** The quote as written, redacted and clamped by the caller. */
+  quote?: string;
+  /** True for a sidecar `true # jev:intended t-…` call. */
+  sidecar?: boolean;
+}): string {
+  const head = input.id === undefined ? "[jev]" : `[jev] tripwire ${input.id}:`;
+  const what = input.sidecar === true ? "this sidecar affirmation did not clear the trip" : `this ${input.tool} call was not run`;
+  const quoted = input.quote === undefined ? "" : ` "${input.quote}"`;
+  const reason =
+    input.why === "no-quote"
+      ? `its \`# jev:intended\` marker carries no quote, and a marker has to quote the user since 0.7.2`
+      : input.why === "too-short"
+        ? `the quoted text${quoted} is shorter than three words and is not the whole of any of your user's messages`
+        : input.why === "empty"
+          ? `the quoted text has no words in it`
+          : `the quoted text${quoted} is not in any of your user's messages`;
+  return (
+    `${head} ${what}: ${reason}. The marker form is \`${MARKER_FORM}\`; ${MARKER_CHECK} ` +
+    `Marker text is recorded and shown to the user by /jev:why.`
   );
 }
 
@@ -447,9 +527,9 @@ export function lintTripText(input: {
   return (
     `[jev] tripwire ${input.id}: this ${input.tool} call was not run. The jev classifier scored the new text as ${scored}. ` +
     `The classifier reads the edit literally and can be wrong; ${caveat}. The call is re-runnable unchanged after a ` +
-    `separate Bash call \`true # jev:intended ${input.id}: <the sentence of the user's request that requires this exact edit>\`; ` +
-    `it then passes this hook without further judgment and Claude Code's own permission rules still apply. ${narrower} ` +
-    `Marker text is recorded and shown to the user by /jev:why.`
+    `separate Bash call \`${sidecarMarker(input.id)}\`, quoting the words of the user's request that ask for this ` +
+    `exact edit. ${MARKER_CHECK} A matching quote passes this hook without further judgment and Claude Code's own ` +
+    `permission rules still apply. ${narrower} Marker text is recorded and shown to the user by /jev:why.`
   );
 }
 
@@ -481,9 +561,9 @@ export function commitSecretTripText(input: { id: string; p: number }): string {
   return (
     `[jev] tripwire ${input.id}: this git commit was not run. The jev classifier scored the staged diff as ` +
     `adding a hardcoded credential (p=${p(input.p)}). The classifier reads literally and can be wrong. It is ` +
-    `re-runnable unchanged with \`# jev:intended <the sentence of the user's request that requires committing ` +
-    `this literal>\` on its last line; it then passes this hook and Claude Code's own permission rules still ` +
-    `apply. Marker text is recorded and shown to the user by /jev:why.`
+    `re-runnable unchanged with \`${MARKER_FORM}\` on its last line, quoting the words of the user's request ` +
+    `that ask for committing this literal. ${MARKER_CHECK} A matching quote passes this hook and Claude Code's ` +
+    `own permission rules still apply. Marker text is recorded and shown to the user by /jev:why.`
   );
 }
 

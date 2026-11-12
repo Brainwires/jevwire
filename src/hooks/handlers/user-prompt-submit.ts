@@ -15,6 +15,7 @@ import { levelMass } from "../../decision/policy.js";
 import type { ChoiceAnswer, Question, ScoreAnswer } from "../../decision/types.js";
 import { MAX_PROMPT_CHARS, modelCost, nextPrompts } from "../store.js";
 import { redactAndClamp } from "../redact.js";
+import { nextDirectives } from "../standing.js";
 import type { Deps, HookInput, HookOutput } from "../types.js";
 
 /** Below this, a prompt is an acknowledgement and not worth classifying. */
@@ -45,6 +46,9 @@ const KINDS: Record<string, string> = {
   other: "None of the above fits.",
 };
 
+/** Task kinds that define work outliving one turn, for the standing instructions. */
+export const TASK_DEFINING_KINDS = new Set(["multi_file_implementation", "debugging_unknown_cause", "risky_change"]);
+
 const QUESTIONS: Record<string, Question> = {
   kind: { type: "choice", instructions: "What kind of task is `prompt` asking for?", criteria: KINDS },
   ambiguity: {
@@ -70,15 +74,29 @@ export async function handleUserPromptSubmit(input: HookInput, deps: Deps): Prom
   // moment before the user types "yes, do that" must still be answerable, and
   // clearing them on every prompt would make a marker a no-op after any
   // interleaved message.
+  //
+  // Standing instructions are kept here too, from the whole session: a prompt
+  // that reads as an ongoing directive outlives the five-prompt window until
+  // the user changes topic (`standing.ts`).
+  const clamped = redactAndClamp(prompt, MAX_PROMPT_CHARS);
   const session = store.updateSession(
     sessionId,
-    (state) => ({
-      ...state,
-      prompts: nextPrompts(state.prompts, redactAndClamp(prompt, MAX_PROMPT_CHARS)),
-      stop_blocks: 0,
-      pending_reissues: [],
-      notes_this_prompt: 0,
-    }),
+    (state) => {
+      // An empty prompt, or the same prompt delivered twice (the double-fire
+      // `nextPrompts` already drops), is not a new prompt.
+      const text = clamped.trim();
+      const fresh = text !== "" && state.prompts[state.prompts.length - 1] !== text;
+      const seq = (state.prompt_seq ?? 0) + (fresh ? 1 : 0);
+      return {
+        ...state,
+        prompts: nextPrompts(state.prompts, clamped),
+        prompt_seq: seq,
+        directives: fresh ? nextDirectives(state.directives ?? [], text, seq, deps.now()) : (state.directives ?? []),
+        stop_blocks: 0,
+        pending_reissues: [],
+        notes_this_prompt: 0,
+      };
+    },
     deps.now(),
   );
   store.pruneSessions(deps.now());
@@ -156,6 +174,19 @@ export async function handleUserPromptSubmit(input: HookInput, deps: Deps): Prom
       ...logged,
       ...modelCost(result),
     });
+
+    // A confidently task-defining prompt is a standing instruction even when
+    // its wording does not say "keep going".
+    if (TASK_DEFINING_KINDS.has(kind.choice)) {
+      store.updateSession(
+        sessionId,
+        (state) => ({
+          ...state,
+          directives: nextDirectives(state.directives ?? [], clamped, state.prompt_seq ?? 0, deps.now(), true),
+        }),
+        deps.now(),
+      );
+    }
 
     return {
       hookSpecificOutput: { hookEventName: "UserPromptSubmit", additionalContext: lines.join("\n") },

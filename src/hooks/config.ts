@@ -110,6 +110,21 @@ export interface HookConfig {
   dataDir: string;
   /** `JEV_HOOKS_DISABLE=1`: every hook becomes a no-op. */
   disabled: boolean;
+  /**
+   * Accept the pre-0.7.2 unquoted `# jev:intended <sentence>` marker on trust.
+   *
+   * Off by default: a marker must quote one of the user's own messages, and
+   * the quote is checked against the session transcript. On, an unquoted
+   * marker of at least `MIN_AFFIRM_CHARS` passes as it did in 0.7.1, and a
+   * quoted one is still checked and logged, but not refused when unmatched.
+   */
+  legacyMarkers: boolean;
+  /**
+   * Earlier "standing instruction" prompts — "keep going with X, and its
+   * release" — judged alongside the last five, newest first, until the user
+   * changes topic. 0 turns it off.
+   */
+  standingDirectives: number;
   /** Malformed option values, for `/jev:status`. */
   warnings: string[];
 }
@@ -137,12 +152,17 @@ export const HOOK_DEFAULTS = {
   lint: "advisory" as LintLevel,
   lintConventions: true,
   verifyClaims: true,
+  legacyMarkers: false,
+  standingDirectives: 3,
   autoThreshold: 0.85,
   reviewThreshold: 0.6,
   confidenceThreshold: 0.85,
   daemonPort: DEFAULT_PORT,
   daemonIdleMs: DEFAULT_IDLE_MS,
 } as const;
+
+/** The most standing instructions a judgment may carry, whatever the setting says. */
+export const MAX_STANDING_DIRECTIVES = 10;
 
 export type Env = Record<string, string | undefined>;
 
@@ -296,6 +316,10 @@ export function loadHookConfig(env: Env = process.env): HookConfig {
     lint: readLint(env, warnings),
     lintConventions: readBool(env, "lint_conventions", HOOK_DEFAULTS.lintConventions, warnings, "JEV_LINT_CONVENTIONS"),
     verifyClaims: readBool(env, "verify_claims", HOOK_DEFAULTS.verifyClaims, warnings, "JEV_VERIFY_CLAIMS"),
+    legacyMarkers: readBool(env, "legacy_markers", HOOK_DEFAULTS.legacyMarkers, warnings, "JEV_LEGACY_MARKERS"),
+    standingDirectives: Math.floor(
+      readNumber(env, "standing_directives", HOOK_DEFAULTS.standingDirectives, 0, MAX_STANDING_DIRECTIVES, warnings, "JEV_STANDING_DIRECTIVES"),
+    ),
     autoThreshold: auto,
     reviewThreshold: Math.min(review, auto),
     confidenceThreshold: readNumber(

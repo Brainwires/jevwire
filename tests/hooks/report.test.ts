@@ -155,8 +155,11 @@ describe("statusReport", () => {
     store.append(record({ decision: "marker-unmatched" }));
     store.append(record({ decision: "marker-short" }));
     store.append(record({ decision: "affirm" }));
+    store.append(record({ decision: "marker-pass" }));
+    store.append(record({ decision: "marker-unverified" }));
+    store.append(record({ decision: "affirm-unverified" }));
     expect(statusReport(testConfig(dir), store, NOW)).toContain(
-      "markers: 1 sidecar affirmations, 1 on untripped calls, 1 too short",
+      "markers: 1 sidecar affirmations, 1 passed on a verified quote, 2 refused (quote not the user's), 1 on user-owned code-rule calls, 1 too short",
     );
   });
 
@@ -241,6 +244,30 @@ describe("whyReport", () => {
       expect(report, filter).toContain("→  marker-refused");
       expect(report, filter).toContain("marker text: the user asked for a clean home directory");
       expect(report, filter).toContain("→  affirm-refused");
+    }
+  });
+
+  it("shows which user message a verified quote matched, and why a quote was refused", () => {
+    store.append(
+      record({
+        decision: "reissue",
+        trip_id: "t-aaaaaaaa",
+        source: "model",
+        affirmation: '"keep going with the jevwire fix" release step',
+        marker_check: "verified",
+        marker_match: { age: 4, message: "keep going with the jevwire fix, and its next release" },
+        standing: [{ age: 4, text: "keep going with the jevwire fix, and its next release" }],
+      }),
+    );
+    store.append(record({ decision: "marker-unverified", marker_check: "unverified", marker_refusal: "not-found", affirmation: '"ship it all" ok' }));
+    store.append(record({ decision: "marker-pass", marker_check: "legacy", affirmation: "the user asked for it" }));
+    for (const filter of ["all", "trips"] as const) {
+      const report = whyReport(store, 3, filter);
+      expect(report, filter).toContain("quote verified in the user message 4 back: keep going with the jevwire fix, and its next release");
+      expect(report, filter).toContain("→  marker-unverified");
+      expect(report, filter).toContain("quote refused: the quoted text is not in any of the user's messages");
+      expect(report, filter).toContain("quote not verified: accepted on trust (legacy_markers)");
+      expect(report, filter).toContain("standing instructions read: 4 prompts ago: keep going with the jevwire fix");
     }
   });
 
@@ -405,9 +432,13 @@ describe("calibrateReport", () => {
     store.append(record({ decision: "marker-unmatched" }));
     store.append(record({ decision: "marker-short" }));
     store.append(record({ decision: "affirm-unmatched" }));
+    store.append(record({ decision: "marker-unverified" }));
+    store.append(record({ decision: "marker-pass" }));
     const report = calibrateReport(testConfig(dir), store);
-    expect(report).toContain("markers on calls that were never tripped: 2");
-    expect(report).toContain("markers too short to count as a reason: 1");
+    expect(report).toContain("markers refused because the quote was not the user's: 1");
+    expect(report).toContain("markers that passed an untripped call on a verified quote: 1");
+    expect(report).toContain("markers on user-owned code-rule calls (never honoured): 2");
+    expect(report).toContain("markers too short to count as a reason (legacy_markers): 1");
     expect(report).toContain("sidecar affirmations naming an unknown trip: 1");
     expect(report).toContain("the reflex metric");
   });

@@ -7,6 +7,53 @@ Code plugin is `jev`; the repository was renamed to jevwire after 0.3.0.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased] — 0.7.2
+
+### Security
+
+- **A `# jev:intended` marker has to quote the user, and the quote is checked.** Until now the
+  marker was trusted: any `# jev:intended <sentence>` of 12 characters or more cleared a model, lint
+  or commit tripwire, whatever the sentence said. The marker is now `# jev:intended "<quote>"
+  <optional why>`, and the quote has to be found in a message the user typed. The hook reads the
+  session transcript (`transcript_path`) and keeps only genuine user entries — not tool results,
+  `<system-reminder>`s, task notifications, slash-command wrappers, local-command output, compact
+  summaries, subagent sidechains or pasted-content blocks — plus the prompts it recorded itself. The
+  whole session is searched, case, whitespace and punctuation are normalized away, whole words only,
+  and a quote under three words counts only as a whole message (`"yes"` quotes a reply that was just
+  "yes"). A quote that is not found is denied with `the quoted text "…" is not in any of your user's
+  messages`; there is no fallback to trust. The sidecar form is `true # jev:intended t-…: "<quote>"
+  <why>`. The old unquoted form works only with the new `legacy_markers` setting, off by default.
+
+### Fixed
+
+- **The same marked call now gets the same answer.** A marker on a call with no trip open against it
+  was stripped and ignored, so the call was judged and refused — and that refusal opened a trip, so
+  the identical call a moment later was accepted as its re-issue. The marker now has one verdict per
+  call, decided before the open-trip lookup: a verified marker passes the call whether or not a trip
+  is open (`marker-pass`; under `legacy_markers`, so does an accepted unquoted one), a refused one is
+  denied every time (`marker-unverified`), and a code-rule trip under `pattern_trips: ask` or `deny`
+  still outranks any marker.
+- **A marker on a command that ends in a newline is read.** The marker was taken from the text after
+  the last newline, which for a command ending in `\n` is empty: the marker went unread, became part
+  of the fingerprint, and the re-issue was told it was "still without a marker" with the marker on
+  the line above. The last non-blank line is read now. A legacy marker too short to count is reported
+  as that rather than as no marker.
+
+### Added
+
+- **Standing instructions widen scope.** Scope is judged against the last five prompts, so "keep
+  going with the jevwire fix, and its next release" stopped counting after a few unrelated messages
+  and later steps of the same task read as unrelated. Prompts that read as ongoing directives (keep
+  going, continue, handle, take care of, finish, "and its release", from now on, …; or, with
+  `route_prompts`, a confidently task-defining kind) are now kept from the whole session, and the
+  newest `standing_directives` (default 3, `0` turns it off) not already among the last five are sent
+  with the request, each tagged `[standing instruction from N prompts ago]` and clamped to 600
+  characters. A topic change or "that's done" clears them. A tripwire names what scope was judged
+  against, standing instructions included, and the log records them.
+- `/jev:why` prints, for each marker, the user message its quote matched (or why it was refused) and
+  the standing instructions a judgment read; `/jev:status` and `/jev:calibrate` count verified,
+  refused and pre-emptive markers.
+
 ## [0.7.1] — 2026-11-12
 
 ### Security

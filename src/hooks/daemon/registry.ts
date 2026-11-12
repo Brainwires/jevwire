@@ -22,6 +22,7 @@
 
 import {
   GATE_LEVELS,
+  MAX_STANDING_DIRECTIVES,
   LINT_LEVELS,
   PATTERN_TRIP_POLICIES,
   type GateLevel,
@@ -98,6 +99,8 @@ export function readSessionConfig(raw: unknown, fallback: SessionConfig): Sessio
         : fallback.lint,
     lintConventions: bool(value.lintConventions, fallback.lintConventions),
     verifyClaims: bool(value.verifyClaims, fallback.verifyClaims),
+    legacyMarkers: bool(value.legacyMarkers, fallback.legacyMarkers),
+    standingDirectives: Math.floor(num(value.standingDirectives, fallback.standingDirectives, 0, MAX_STANDING_DIRECTIVES)),
     autoThreshold: auto,
     reviewThreshold: Math.min(num(value.reviewThreshold, fallback.reviewThreshold, 0, 1), auto),
     confidenceThreshold: num(value.confidenceThreshold, fallback.confidenceThreshold, 0.5, 0.99),

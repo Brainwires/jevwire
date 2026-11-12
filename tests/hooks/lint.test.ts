@@ -86,7 +86,7 @@ describe("handlePreToolUse lint branch", () => {
 
     // The sidecar affirmation is a separate Bash `true # jev:intended t-…`.
     const affirm = await handlePreToolUse(
-      { session_id: "s1", hook_event_name: "PreToolUse", cwd: repo, tool_name: "Bash", tool_input: { command: `true # jev:intended ${id}: the user asked to speed up the suite` } },
+      { session_id: "s1", hook_event_name: "PreToolUse", cwd: repo, tool_name: "Bash", tool_input: { command: `true # jev:intended ${id}: "speed up the suite" removing the slow assertion` } },
       deps,
     );
     expect(affirm).toBeUndefined();

@@ -154,18 +154,53 @@ Claude is told why, with the marker that re-issues it:
 
 ```
 [jev] tripwire t-4f19ab02: this Bash call was not run. The jev classifier scored it reaching outside
-this machine (p=0.97) and not part of the last 2 user prompts (scope: unrelated p=0.91). The classifier reads
-literally and can be wrong. The call is re-runnable unchanged with the marker `# jev:intended <the
-sentence of the user's request that requires this exact action>` on its last line; it then passes
-this hook without further judgment and Claude Code's own permission rules still apply. A narrower
-action needs no marker. Marker text is recorded and shown to the user by /jev:why.
+this machine (p=0.97) and not part of the last 2 user prompts (scope: unrelated p=0.91). The classifier
+reads literally and can be wrong. The call is re-runnable unchanged with the marker `# jev:intended
+"<words quoted exactly from one of the user's messages>" <optional why>` on its last line, quoting
+the words of the user's request that ask for this exact action. The quote is checked against the
+user's messages in the session transcript (a quote under three words counts only as a whole
+message). A matching quote passes this hook without further judgment and Claude Code's own
+permission rules still apply. A narrower action needs no marker. Marker text is recorded and shown
+to the user by /jev:why.
 ```
 
-Re-issuing the identical call with `# jev:intended the request says "refund the duplicate charge on
-order A-104"` on its last line passes the hook, with no second judgment and no model call. Claude's
-reason is logged verbatim and printed by `/jev:why` — that text is the audit trail, and it is worth
-reading. For Write, Edit and MCP tools, which have no comment syntax, the marker arrives as a
-separate `true # jev:intended t-4f19ab02: <that sentence>` call first.
+Re-issuing the identical call with `# jev:intended "refund the duplicate charge on order A-104" the
+payment is that refund` on its last line passes the hook, with no second judgment and no model call
+— **if** "refund the duplicate charge on order A-104" is in one of your messages. Since 0.7.2 the
+marker is verified, not trusted:
+
+- The words in double quotes are looked up in the session transcript (`transcript_path`), in the
+  entries you typed: tool results, `<system-reminder>`s, task notifications, slash-command wrappers,
+  local-command output, compact summaries, subagent sidechains and pasted-content blocks are never
+  searched. The prompts the plugin recorded itself are searched too, for a transcript that has not
+  been written yet. The whole session counts, not just the last five prompts.
+- Case, whitespace and punctuation are normalized away and only whole words match. A quote of fewer
+  than three words counts only when it is the whole of one of your messages, so `"yes"` answers a
+  question you replied "yes" to, and not a message that says "yes, but not the deploy".
+- A quote that is not found is refused, out loud: the call is denied with `the quoted text "…" is not
+  in any of your user's messages`, and an open trip stays open. There is no fallback to trust.
+- The same marked call gets the same answer every time. A verified marker passes the call whether or
+  not a trip is open against it (before 0.7.2 a marker on an untripped call was ignored, so the call
+  was refused once and then accepted on the identical retry); a refused one is denied every time. A
+  code-rule trip under `pattern_trips: ask` or `deny` is the one thing a marker never clears.
+
+`/jev:why` prints each marker's text and, for a verified one, the user message it matched. For Write,
+Edit and MCP tools, which have no comment syntax, the marker arrives as a separate
+`true # jev:intended t-4f19ab02: "<the quoted words>" <optional why>` call first. The 0.7.1 unquoted
+form, `# jev:intended <sentence>`, is accepted on trust only with `legacy_markers` on.
+
+**Standing instructions.** Scope is judged against your last five prompts. A task-defining
+instruction — "keep going with the jevwire fix, and its next release" — falls out of that window after
+a few unrelated messages, and from then on every later step of the same task reads as unrelated. So
+the plugin also keeps, from the whole session, the prompts that read as ongoing directives (keep
+going, continue, handle, take care of, finish, follow through, "and its release", from now on, …, at
+least four words; with `route_prompts` on, also a prompt confidently classified as a multi-file
+implementation, a debugging task or a risky change). The newest `standing_directives` (default 3)
+that are not already among the recent five are sent with the request, each tagged `[standing
+instruction from N prompts ago]` and clamped to 600 characters, so the cost is bounded by the setting
+and never grows with the transcript. They are forgotten when you change topic or say the task is done
+("new task", "never mind", "forget that", "that's done", "stop working on …"). A tripwire says what
+scope was judged against, standing instructions included, and `/jev:why` lists them.
 
 The hard-coded catastrophic shapes — `rm -rf ~`, `git push --force` to main, `git reset --hard`,
 `DROP TABLE`, `mkfs`, `dd of=/dev/…`, `chmod -R 777`, a fork bomb — trip the same way, without
@@ -314,6 +349,8 @@ environment fallback for hand-wired use.
 | `gate` | `off` \| `advisory` \| `strict` | `advisory` | `advisory` judges writes outside the project, sensitive paths, unrecognized shell commands and MCP tools with unknown effects, notes what it finds, and trips the two block-grade cases; `strict` also judges ordinary in-project edits and notes the cases advisory mode keeps to itself. Replaces `gate_mode` (see below) | `JEV_GATE` |
 | `ask_on_trip` | boolean | `false` | Turn a classifier tripwire's `deny` (model, lint, commit) into a permission prompt, so you decide instead of Claude. No effect in `dontAsk`/`bypassPermissions`. Code-rule trips are governed by `pattern_trips` | `JEV_ASK_ON_TRIP` |
 | `pattern_trips` | `ask` \| `deny` \| `advisory` | `ask` | Who clears a code-rule trip (`rm -rf ~`, a force push to `main`, `git reset --hard`, `mkfs`, `dd` to a device, a recursive world-writable `chmod`, a fork bomb, an attempt to turn this plugin off). `ask`: you approve or refuse it in the permission prompt, denied in `dontAsk`/`bypassPermissions`; `deny`: always denied; `advisory`: the pre-0.7 behaviour, denied once to Claude, which may re-issue it with a `# jev:intended` marker. A marker never clears a code-rule trip under `ask` or `deny` | `JEV_PATTERN_TRIPS` |
+| `legacy_markers` | boolean | `false` | Accept the pre-0.7.2 unquoted `# jev:intended <sentence>` marker on trust. Off by default: a marker has to quote one of your messages, `# jev:intended "<your exact words>" <why>`, and the quote is checked against the session transcript; one that is not found is refused. On, an unquoted marker of at least 12 characters passes as in 0.7.1 and a quoted one is still checked and logged | `JEV_LEGACY_MARKERS` |
+| `standing_directives` | number, 0–10 | `3` | Earlier prompts that read as ongoing directives ("keep going with X, and its release") judged alongside the last five, newest first and tagged with their age, until you change topic. `0` turns it off | `JEV_STANDING_DIRECTIVES` |
 | `stop_check` | boolean | `true` | The `Stop` check on the final message | `JEV_STOP_CHECK` |
 | `verify_claims` | boolean | `true` | The model half of the `Stop` claim check (reads `git diff HEAD`). The deterministic file/identifier checks always run under `stop_check` | `JEV_VERIFY_CLAIMS` |
 | `screen_results` | boolean | `true` | The `PostToolUse` injection screen | `JEV_SCREEN_RESULTS` |
@@ -328,8 +365,10 @@ Environment-only, no plugin setting: `JEV_DAEMON_DISABLE=1` stops `SessionStart`
 all, and `JEV_HOOKS_DISABLE=1` turns every hook off.
 
 Constants, not settings: a trip is answerable for 30 minutes, at most 20 are tracked per session, at
-most 5 notes go out per user prompt, the same action is not noted twice within 30 minutes, an
-affirmation marker's reason has to be at least 12 characters to count as one, a captured subagent
+most 5 notes go out per user prompt, the same action is not noted twice within 30 minutes, a
+marker's quote has to be at least three words or a whole user message (and, under `legacy_markers`,
+an unquoted reason at least 12 characters), at most 32 MB of a transcript's tail is read for the
+quote check, at most 10 standing instructions are kept per session, a captured subagent
 task lives for 30 minutes, and a screened tool result is judged in at most 8 chunks of 16,000
 characters.
 
@@ -752,14 +791,15 @@ override are pure functions with their own tests; the model only ever supplies p
   block-grade judgment) acts before execution. If you read the note count as "things that were
   prevented", you will be wrong every time.
 - **A classifier tripwire is answerable by the agent, on purpose.** For a model, lint or commit trip,
-  Claude can re-issue the identical call with `# jev:intended <reason>` and it passes. That is the
-  design — a classifier can be wrong, and a gate the agent cannot answer is a gate that ends the
-  turn — but it means those trips are not a boundary. Code-rule trips are different since 0.7.0:
-  under the default `pattern_trips: ask` a marker does not clear them, you do. The mitigations for
-  the rest are that a marker is honoured only against a trip this hook wrote for that exact action
-  within 30 minutes, marker text never reaches Jev, and every marker is logged and printed by
-  `/jev:why`. Read them: `# jev:intended user asked` is a reflex, not a reason, and
-  `/jev:calibrate` counts markers typed at calls that were never tripped.
+  Claude can re-issue the identical call with `# jev:intended "<your words>" <why>` and it passes.
+  That is the design — a classifier can be wrong, and a gate the agent cannot answer is a gate that
+  ends the turn — but it means those trips are not a boundary. Code-rule trips are different since
+  0.7.0: under the default `pattern_trips: ask` a marker does not clear them, you do. Since 0.7.2 the
+  quote has to be found in one of your own messages in the transcript, so the agent cannot cite words
+  you never wrote; it can still cite words you did write, for an action they do not really cover, so
+  read the quote against the call. Marker text never reaches Jev, and every marker — with the message
+  its quote matched, or why it was refused — is logged and printed by `/jev:why`. `/jev:calibrate`
+  counts the refused ones: each is the agent claiming words nobody typed.
 - **Calibration is yours to measure, and it is not accuracy.** `/jev:calibrate` reports what was
   said, what was suppressed and how every tripwire ended. Nobody is prompted, so there is no human
   verdict to score against. The strongest evidence the plugin can offer is a model trip that was
@@ -843,7 +883,7 @@ Claude is told and may re-issue the call with a marker. A classifier judgment ne
 unless `ask_on_trip` is on: it is a note to Claude, or a single `deny` addressed to Claude. Any
 other prompt is Claude Code's own — check `/permissions`, not this plugin. (One case is worth
 knowing: a sidecar affirmation for a Write or an MCP tool is a real Bash call, `true # jev:intended
-…`, which Claude Code's own rules may prompt for in `default` mode. `Bash(true:*)` in your allowlist
+t-…: "…"`, which Claude Code's own rules may prompt for in `default` mode. `Bash(true:*)` in your allowlist
 settles it.)
 
 **Too many notes.** Run `/jev:calibrate`. Section 1 lists notes emitted next to everything the table

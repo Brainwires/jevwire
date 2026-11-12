@@ -8,9 +8,11 @@
  *
  * The session file exists because a hook fires with a tool call, not with the
  * user's request. `transcript_path` is documented as "conversation JSON" with
- * no schema and is written asynchronously, so parsing it would be guessing at a
- * private format; the UserPromptSubmit hook records the prompt instead and
- * every other handler reads it from here.
+ * no schema and is written asynchronously, so the gate does not judge scope
+ * from it; the UserPromptSubmit hook records the prompt instead and every
+ * other handler reads it from here. The one exception is the marker check
+ * (`transcript.ts`): a quote is looked up in the transcript's user entries,
+ * with the prompts recorded here as the fallback.
  */
 
 import {
@@ -29,6 +31,7 @@ import { basename, dirname, join } from "node:path";
 import type { SessionConfig } from "./daemon/registry.js";
 import { liveTrips, MAX_TRIPS, readTrip, type Trip, type TripSource } from "./tripwire.js";
 import { VERIFICATION_KINDS, type VerificationLedger } from "./verification.js";
+import { readDirectives, type Directive } from "./standing.js";
 
 /** Maximum substantive prompts kept per session, oldest first. */
 export const MAX_PROMPTS = 3;
@@ -150,6 +153,14 @@ export interface SessionState {
   prompts: string[];
   /** Stop blocks issued since the last user prompt. */
   stop_blocks: number;
+  /** User prompts seen this session, for the age of a standing instruction. */
+  prompt_seq?: number;
+  /**
+   * Standing instructions from the whole session, newest last
+   * (`standing.ts`). Deliberately NOT trimmed with `prompts`: outliving the
+   * five-prompt window is the reason they exist. Cleared by a topic change.
+   */
+  directives?: Directive[];
   /** `/jev:off` for this session. */
   disabled?: boolean;
   /**
@@ -236,6 +247,18 @@ export interface DecisionRecord {
   emitted?: string;
   /** The agent's stated reason for a re-issue, redacted and clamped. */
   affirmation?: string;
+  /**
+   * How the marker's quote fared against the transcript: `verified` (found in
+   * a user message), `unverified` (refused: not found, too short, or no
+   * quote), or `legacy` (accepted on trust under `legacy_markers`).
+   */
+  marker_check?: "verified" | "unverified" | "legacy";
+  /** Why an unverified marker was refused. */
+  marker_refusal?: "no-quote" | "empty" | "too-short" | "not-found";
+  /** The user message a verified quote was found in, redacted and clamped, and how many messages ago. */
+  marker_match?: { age: number; message: string };
+  /** Standing instructions the scope judgment carried, newest first, redacted and clamped. */
+  standing?: { age: number; text: string }[];
   /** Why a note that the table called for was not emitted. */
   suppressed?: string;
   /** The firm reasons behind a note or a trip, in priority order. */
@@ -412,6 +435,13 @@ export class Store {
         stop_blocks: typeof state.stop_blocks === "number" ? state.stop_blocks : 0,
       };
       if (state.disabled === true) session.disabled = true;
+      if (typeof state.prompt_seq === "number" && Number.isFinite(state.prompt_seq) && state.prompt_seq >= 0) {
+        session.prompt_seq = Math.floor(state.prompt_seq);
+      }
+      // A directive reaches the Jev API as part of the request, so it is
+      // validated like a subagent task rather than trusted.
+      const directives = readDirectives(state.directives);
+      if (directives !== undefined) session.directives = directives;
       if (state.key_warned === true) session.key_warned = true;
       if (typeof state.gate_error_notice_at === "number" && Number.isFinite(state.gate_error_notice_at) && state.gate_error_notice_at >= 0) {
         session.gate_error_notice_at = state.gate_error_notice_at;

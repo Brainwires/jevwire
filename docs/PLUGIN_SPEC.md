@@ -178,9 +178,19 @@ are the pure function `gateOutcome` in `src/hooks/advisory.ts`; the wording is
 **Tripwire.** `fingerprint = sha256(tool_name + "\0" + canonical)[0:16]`, `trip_id = "t-" + fp[0:8]`.
 Bash canonical = marker stripped, CRLF normalized, trimmed; file tools = canonical JSON (sorted keys) of
 path + content/old+new/edits; everything else = canonical JSON of `tool_input` minus `description`.
-Marker forms: inline (Bash) `# jev:intended <reason>` on the last line, not honoured if the stripped
-command scans unbalanced; sidecar (any tool) a Bash call whose stripped body is exactly `true` or `:`
-with `# jev:intended <trip_id>: <reason>`. `MIN_AFFIRM_CHARS = 12`, `TRIP_TTL_MS` = 30 min,
+Marker forms: inline (Bash) `# jev:intended "<quote>" <why>` on the last non-blank line, not honoured
+if the stripped command scans unbalanced; sidecar (any tool) a Bash call whose stripped body is exactly
+`true` or `:` with `# jev:intended <trip_id>: "<quote>" <why>`. Since 0.7.2 the quote is verified
+(`intent.ts`, `transcript.ts`): normalized (NFKC, lowercase, apostrophes dropped, non-alphanumerics to
+spaces) and found as whole words in one genuine user message from `transcript_path` (type `user`,
+not `isMeta`/`isSidechain`/`isCompactSummary`, no `tool_result` block, injected tags stripped) or the
+recorded prompts; under `MIN_QUOTE_WORDS = 3` words it has to equal the whole message. Unverified →
+deny (`marker-unverified` / `affirm-unverified`), never a fallback. One verdict per call, before the
+open-trip lookup: a verified marker on an untripped call passes (`marker-pass`), the same answer row 3
+gives; a code-rule trip under `ask`/`deny` still outranks it. `legacy_markers` (default off) accepts
+the unquoted form (`MIN_AFFIRM_CHARS = 12`). Standing instructions (`standing.ts`): up to
+`standing_directives` (default 3) directive prompts from the whole session, tagged with their age,
+are prepended to `request.previous`; cleared on a topic change. `TRIP_TTL_MS` = 30 min,
 `MAX_TRIPS = 20`, `MAX_NOTES_PER_PROMPT = 5`, `NOTE_DEDUPE_TTL_MS` = 30 min. Log everything.
 
 ### PostToolUse — matcher `WebFetch|WebSearch|mcp__.*`

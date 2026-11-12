@@ -29322,12 +29322,15 @@ var HOOK_DEFAULTS = {
   lint: "advisory",
   lintConventions: true,
   verifyClaims: true,
+  legacyMarkers: false,
+  standingDirectives: 3,
   autoThreshold: 0.85,
   reviewThreshold: 0.6,
   confidenceThreshold: 0.85,
   daemonPort: DEFAULT_PORT,
   daemonIdleMs: DEFAULT_IDLE_MS
 };
+var MAX_STANDING_DIRECTIVES = 10;
 function read(env, option, ...fallbacks) {
   for (const key of [`CLAUDE_PLUGIN_OPTION_${option.toUpperCase()}`, ...fallbacks]) {
     const raw = env[key];
@@ -29443,6 +29446,10 @@ function loadHookConfig(env = process.env) {
     lint: readLint(env, warnings),
     lintConventions: readBool(env, "lint_conventions", HOOK_DEFAULTS.lintConventions, warnings, "JEV_LINT_CONVENTIONS"),
     verifyClaims: readBool(env, "verify_claims", HOOK_DEFAULTS.verifyClaims, warnings, "JEV_VERIFY_CLAIMS"),
+    legacyMarkers: readBool(env, "legacy_markers", HOOK_DEFAULTS.legacyMarkers, warnings, "JEV_LEGACY_MARKERS"),
+    standingDirectives: Math.floor(
+      readNumber2(env, "standing_directives", HOOK_DEFAULTS.standingDirectives, 0, MAX_STANDING_DIRECTIVES, warnings, "JEV_STANDING_DIRECTIVES")
+    ),
     autoThreshold: auto,
     reviewThreshold: Math.min(review, auto),
     confidenceThreshold: readNumber2(

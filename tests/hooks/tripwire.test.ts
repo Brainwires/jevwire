@@ -35,7 +35,11 @@ describe("parseMarker", () => {
     ["a tab before the hash", `rm -rf build\t# jev:intended ${REASON}`, REASON],
     ["a marker on its own last line", `rm -rf build\n# jev:intended ${REASON}`, REASON],
     ["after a heredoc terminator", `cat > f <<'EOF'\nbody\nEOF\n# jev:intended ${REASON}`, REASON],
-    ["a blank line after the marker hides it", `rm -rf build\r\n# jev:intended ${REASON}\r\n`, undefined],
+    // 0.7.2: a trailing newline used to make the last line empty and hide the
+    // marker, which is how an identical marked re-issue came to be told it was
+    // "still without a marker".
+    ["a trailing newline does not hide it", `rm -rf build\r\n# jev:intended ${REASON}\r\n`, REASON],
+    ["trailing blank lines do not hide it", `rm -rf build # jev:intended ${REASON}\n\n  \n`, REASON],
     ["no marker at all", "rm -rf build", undefined],
     ["a hash that is not a marker", "git commit -m 'fix #123'", undefined],
     ["a url fragment", "curl https://example.com/x#jev:intended nothing here", undefined],

@@ -22,8 +22,12 @@ every repeat, and how it ended.
 Each entry prints the tool, the redacted subject, the prefilter verdict, the raw
 probabilities, and — the line that usually answers the question — **`said to
 Claude:`**, the exact text the agent was handed. A re-issue also prints `marker
-text:`, which is the reason Claude gave for going ahead. That text is the audit
-trail for the tripwire: read it, and say plainly if it does not look like a reason.
+text:`, which is the reason Claude gave for going ahead, and `quote verified in
+…:`, the user message its quote was found in (or `quote refused:` and why, for a
+marker that cleared nothing). That pair is the audit trail for the tripwire: read
+the quote against the call, and say plainly if the user's words do not really ask
+for it. A judged call also lists any `standing instructions read:`, the earlier
+prompts the scope judgment was given besides the last five.
 
 If an entry looks wrong to the user:
 
@@ -31,7 +35,7 @@ If an entry looks wrong to the user:
   `/jev:calibrate` first — it replays your own log at other values), or set `gate`
   to `off`;
 - a **tripwire** that should not have fired: the same, and note that a re-issue
-  with a marker already passes without another judgment;
+  with a marker quoting the user's words already passes without another judgment;
 - a **pattern** entry has a `prefilter` line and no signals. It came from a code
   rule, so no threshold change will affect it.
 

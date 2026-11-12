@@ -9,7 +9,7 @@
  */
 
 import { spawn } from "node:child_process";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -133,11 +133,18 @@ describe("node plugin/dist/hook.mjs", () => {
     const again = await runHook(["PreToolUse"], JSON.stringify({ ...PRE, tool_input: { command } }), advisory);
     expect(again.stdout).toContain("(attempt 2)");
 
+    // The marker's quote is looked up in the transcript Claude Code names.
+    const transcript = join(dir, "session.jsonl");
+    writeFileSync(
+      transcript,
+      `${JSON.stringify({ type: "user", message: { role: "user", content: "please clear the old home backup, it is huge" } })}\n`,
+    );
     const reissue = await runHook(
       ["PreToolUse"],
       JSON.stringify({
         ...PRE,
-        tool_input: { command: `${command} # jev:intended the request says "clear the old home backup"` },
+        transcript_path: transcript,
+        tool_input: { command: `${command} # jev:intended "clear the old home backup" it is the old backup` },
       }),
       advisory,
     );
@@ -147,22 +154,38 @@ describe("node plugin/dist/hook.mjs", () => {
     const why = await runHook(["why", "5", "trips"], "", env);
     expect(why.stdout).toContain(tripId as string);
     expect(why.stdout).toContain("→  reissue");
-    expect(why.stdout).toContain("marker text: the request says");
+    expect(why.stdout).toContain('marker text: "clear the old home backup" it is the old backup');
+    expect(why.stdout).toContain("quote verified in the latest user message: please clear the old home backup, it is huge");
     expect(why.stdout).not.toContain("→  note");
   }, 30_000);
 
-  it("records a marker on an untripped call without acting on it", async () => {
-    const run = await runHook(
+  it("passes an untripped call on a verified quote and denies one whose quote nobody wrote", async () => {
+    const transcript = join(dir, "session.jsonl");
+    writeFileSync(transcript, `${JSON.stringify({ type: "user", message: { role: "user", content: "pay the March invoice now" } })}\n`);
+    const verified = await runHook(
       ["PreToolUse"],
       JSON.stringify({
         ...PRE,
-        tool_input: { command: 'curl -X POST https://example.com/pay # jev:intended the request says "pay it"' },
+        transcript_path: transcript,
+        tool_input: { command: 'curl -X POST https://example.com/pay # jev:intended "pay the March invoice"' },
       }),
       env,
     );
-    expect(run.stdout).toBe("");
+    expect(verified.stdout).toBe("");
+    const refused = await runHook(
+      ["PreToolUse"],
+      JSON.stringify({
+        ...PRE,
+        transcript_path: transcript,
+        tool_input: { command: 'curl -X POST https://example.com/pay # jev:intended "pay every open invoice"' },
+      }),
+      env,
+    );
+    expect(refused.stdout).toContain('"permissionDecision":"deny"');
+    expect(refused.stdout).toContain("is not in any of your user's messages");
     const calibrate = await runHook(["calibrate"], "", env);
-    expect(calibrate.stdout).toContain("markers on calls that were never tripped: 1");
+    expect(calibrate.stdout).toContain("markers refused because the quote was not the user's: 1");
+    expect(calibrate.stdout).toContain("markers that passed an untripped call on a verified quote: 1");
   }, 20_000);
 
   it("fails open on a judge-class command with no API key", async () => {
